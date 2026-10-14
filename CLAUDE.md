@@ -71,4 +71,37 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 
 ## Estado atual
 
-Bootstrap: spec e roadmap escritos; PR 1 (`feature/core-storage`) é o próximo.
+**PR 1 (`feature/core-storage`) — atual:** núcleo puro de moedas, `AccountLedger` +
+`AccountService`, SQLite/MySQL por delta, conta criada no pré-login, `/saldo`, CI. Próximo: PR 2
+(`feature/vault-economy`).
+
+### Decisões de design do PR 1
+
+- **O cache é a fonte das leituras e das chamadas síncronas do Vault; o banco recebe deltas.** O
+  Vault é síncrono — consultar o banco a cada `withdrawPlayer` travaria a main thread.
+- **Números de sequência no lugar de lock.** Uma thread só no banco (`SequencedExecutor`) torna a
+  ordem de submissão a ordem de execução. O `AccountLedger` usa isso para decidir se uma leitura já
+  incluiu uma escrita: pagamento offline que termina depois da carga é somado ao cache; antes, não
+  (seria contar duas vezes). Resync: `cache = banco + flushes submetidos depois da leitura +
+  pendente`.
+- **Órfãos cobrem a janela pré-login → join.** O pré-login lê o banco numa thread assíncrona e a
+  conta só entra no cache no join; um pagamento gravado nesse meio não seria visto por nenhum dos
+  dois. A escrita fica guardada como órfã por até 5 min e é reaplicada no join se a leitura foi
+  anterior a ela.
+- **Flush falho volta ao pendente; o de quem já saiu vai para `detached`** e é reenviado no próximo
+  flush. Sem isso, um quit durante queda de banco sumia com o dinheiro.
+- **Conta carregada no pré-login, e falha recusa o login.** Entrar com saldo desconhecido daria
+  "conta não carregada" em toda mutação, sem explicação para o jogador.
+- **`onMain` em vez de `thenApplyAsync(fn, main)`.** O `thenApplyAsync` completa a *falha* na
+  thread que falhou (a do banco), e o callback do comando rodaria fora da main thread justamente no
+  caminho de erro.
+- **Flush com piso em zero no SQL** (`CASE WHEN balance + ? < 0 THEN 0`): o cache já validou; o
+  piso só protege de escrita concorrente de outro servidor no MySQL. A escrita offline usa guarda de
+  verdade (`WHERE balance + ? >= 0 AND balance + ? <= max`) e devolve o motivo da recusa.
+- **`set` vira delta** em relação ao que o cache enxerga, para não apagar escrita de outro servidor
+  ainda não sincronizada.
+- **Busca por nome usa a comparação do dialeto** (`COLLATE NOCASE` / collation do MySQL) para o
+  índice valer; `LOWER(name)` o ignoraria.
+- **Teto de saldo 9×10^15 bronze**, abaixo de 2^53, para o `double` do Vault ser exato.
+- **Prova de regressão feita:** conversão em ponto flutuante, escrita externa contada duas vezes e
+  órfão não reaplicado foram reconstruídos e derrubam a suíte.

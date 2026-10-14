@@ -1,0 +1,33 @@
+# dreamCoinSystem — configuração
+#
+# Quantias são escritas como no jogo: "1 ouro 2 prata 3 bronze" (ou "0").
+# 1 ouro = 1000 prata = 100.000 bronze. 1 prata = 100 bronze.
+# Para o Vault (lojas, leilões), 1.00 = 1 prata e 0.01 = 1 bronze.
+
+storage:
+  # sqlite: servidor único (arquivo na pasta do plugin).
+  # mysql: vários servidores dividindo o mesmo saldo.
+  type: sqlite
+  sqlite:
+    file: dreamcoins.db
+  mysql:
+    host: localhost
+    port: 3306
+    database: dreamcoins
+    username: dreamcoins
+    password: ""
+    pool-size: 5
+    # true exige SSL (sslMode=REQUIRED); false é o normal para banco na rede local.
+    use-ssl: false
+
+accounts:
+  # Saldo de quem entra pela primeira vez.
+  starting-balance: "0"
+  # Ninguém passa deste saldo. "0" = teto absoluto (9999999999 ouro, o maior que o Vault
+  # representa sem erro de arredondamento).
+  max-balance: "9999999999 ouro"
+  # A cada quantos segundos o que mudou é gravado no banco (também grava ao sair).
+  flush-interval-seconds: 10
+  # Só MySQL: a cada quantos segundos o saldo dos online é relido do banco,
+  # para mostrar o que outro servidor gravou.
+  resync-interval-seconds: 30

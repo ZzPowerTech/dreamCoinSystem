@@ -1,0 +1,48 @@
+name: CI
+
+# Nos PRs e no que entra na main: duas PRs verdes isoladamente podem quebrar juntas no merge.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: mvn clean package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Java 25: é o que `maven.compiler.release` exige e o que o servidor roda.
+      - name: Java 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      - name: Build
+        run: mvn -B clean package
+
+      - name: Relatórios de teste
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+
+      - name: Jar
+        uses: actions/upload-artifact@v5
+        with:
+          name: dreamCoinSystem-jar
+          path: target/dreamCoinSystem.jar
+          if-no-files-found: error

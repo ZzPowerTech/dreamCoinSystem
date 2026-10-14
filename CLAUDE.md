@@ -36,8 +36,8 @@ Versões de dependência fixadas nas que o servidor **roda**, não nas mais rece
 4. **Só três moedas**: ouro, prata, bronze. "cobre" **não** é alias.
 5. **Persistência por delta atômico** (`balance = balance + ?`), nunca por valor absoluto: dois
    servidores no mesmo MySQL somam em vez de se sobrescrever.
-6. **Saldo nunca negativo** e com teto (`max-balance`, padrão 9×10^15 bronze) para o `double` do
-   Vault continuar exato.
+6. **Saldo nunca negativo** e com teto absoluto de 999.999.999.999.999 bronze (9.999.999.999 ouro):
+   o maior saldo de 15 dígitos, que é o que um `double` devolve idêntico ao Vault.
 
 ## Convenções específicas
 
@@ -71,4 +71,74 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 
 ## Estado atual
 
-Bootstrap: spec e roadmap escritos; PR 1 (`feature/core-storage`) é o próximo.
+**PR 1 (`feature/core-storage`) — mergeado ([#1](https://github.com/ZzPowerTech/dreamCoinSystem/pull/1)):** núcleo puro de moedas, `AccountLedger` +
+`AccountService`, SQLite/MySQL por delta, conta criada no pré-login, `/saldo`, CI. Próximo: PR 2
+(`feature/vault-economy`).
+
+### Decisões de design do PR 1
+
+- **O cache é a fonte das leituras e das chamadas síncronas do Vault; o banco recebe deltas.** O
+  Vault é síncrono — consultar o banco a cada `withdrawPlayer` travaria a main thread.
+- **Números de sequência no lugar de lock.** Uma thread só no banco (`SequencedExecutor`) torna a
+  ordem de submissão a ordem de execução. O `AccountLedger` usa isso para decidir se uma leitura já
+  incluiu uma escrita: pagamento offline que termina depois da carga é somado ao cache; antes, não
+  (seria contar duas vezes). Resync: `cache = banco + flushes submetidos depois da leitura +
+  pendente`.
+- **Órfãos cobrem a janela pré-login → join.** O pré-login lê o banco numa thread assíncrona e a
+  conta só entra no cache no join; um pagamento gravado nesse meio não seria visto por nenhum dos
+  dois. A escrita fica guardada como órfã por até 5 min e é reaplicada no join se a leitura foi
+  anterior a ela.
+- **Uma conta só sai do cache quando não deve nada ao banco** (revisão do PR #1). Na saída ela fica
+  offline no cache até o último flush confirmar; flush falho volta para a **mesma** entrada, e quem
+  reconecta antes reaproveita a entrada. A primeira versão tirava a conta na hora e guardava o delta
+  falho à parte (`detached`): a sessão nova, lida do banco, não o enxergava e o jogador gastava duas
+  vezes — reproduzido com queda de banco + relog **e** com reconexão rápida sem falha nenhuma.
+- **Lápide** com a sequência da última escrita da sessão que saiu: leitura de pré-login mais antiga
+  que ela é recusada e a conta é relida.
+- **Retirada offline é reserva pessimista, descontada inteira e sem piso**: um login no meio dela
+  já entra descontado, e a recusa devolve o valor cheio. O saldo interno pode ficar negativo
+  enquanto a reserva aguarda (negativo já recusa retirada); só `AccountLedger#balance` corta no
+  zero, para exibição. Cortar o desconto no zero criava dinheiro: com um crédito anterior ainda a
+  caminho, a parte cortada nunca era descontada quando a retirada confirmava (seed 832 do fuzz da
+  re-revisão). Crédito offline continua otimista. Consequências travadas por teste: **`set` devolve
+  `BUSY`** enquanto houver reserva descontada (o delta sobre o saldo descontado virava dinheiro se a
+  retirada fosse recusada), o **teto** de depósito/transferência é checado contra o saldo no pior
+  caso (reservas recusadas), e `applyOffline` recusa `|delta| > max` antes de virar reserva.
+  **O `/moedas set` do PR 3 precisa tratar `BUSY`** com "tente de novo em instantes".
+- **No máximo um flush em voo por conta** (re-revisão do PR #1). Com dois, um crédito que falhasse
+  deixava o débito seguinte bater num banco sem o crédito: o piso cortava o débito, o crédito era
+  regravado e o jogador ficava com dinheiro que gastou. O pendente de uma conta com flush em voo
+  espera o resultado dele; só o desligamento pega tudo (`takeAllPending`), depois de esvaziar a fila.
+- **Conta no cache sempre vai pelo cache**, inclusive em `applyOffline`.
+- **O desligamento recupera flush em voo que falhou**: no `onDisable` a main thread já não roda o
+  callback de falha, então o serviço guarda os lotes em voo e os relê direto do futuro.
+- **O piso em zero do flush não é mais silencioso**: `applyDeltas` devolve o que não pôde debitar e
+  o serviço loga em SEVERE. Com as regras acima, num servidor único ele não deveria agir; em rede,
+  é a janela de troca de servidor abaixo. Se aparecer em servidor único, é defeito a investigar.
+- **Fuzz de interleavings** (feito pelo revisor, fora do repositório): operações aleatórias contra
+  SQLite real com a main thread manual — depósito, retirada, `applyOffline` ±, flush, falha
+  simulada, resync, quit, reconexão com pré-login bloqueado e login duplicado — checando cache ==
+  banco com tudo assentado e banco == soma das mutações aceitas no fim. 0 falhas em 5000 seeds.
+  Vale portar para `src/test` quando o `/pagar` entrar.
+- **Janela conhecida (MySQL em rede):** ao trocar de servidor, o pré-login do servidor B pode ler
+  antes de o flush do servidor A confirmar — as sequências são por processo. O resync (padrão 30 s)
+  corrige a exibição, e o piso + log acima registra se algo foi gasto duas vezes nesse meio.
+- **`last_seen`** (gravado só no login) decide de quem é um nome reaproveitado na busca offline.
+- **Conta carregada no pré-login, e falha recusa o login.** Entrar com saldo desconhecido daria
+  "conta não carregada" em toda mutação, sem explicação para o jogador.
+- **`onMain` em vez de `thenApplyAsync(fn, main)`.** O `thenApplyAsync` completa a *falha* na
+  thread que falhou (a do banco), e o callback do comando rodaria fora da main thread justamente no
+  caminho de erro.
+- **Flush com piso em zero no SQL** (`CASE WHEN balance + ? < 0 THEN 0`): o cache já validou; o
+  piso só protege de escrita concorrente de outro servidor no MySQL. A escrita offline usa guarda de
+  verdade (`WHERE balance + ? >= 0 AND balance + ? <= max`) e devolve o motivo da recusa.
+- **`set` vira delta** em relação ao que o cache enxerga, para não apagar escrita de outro servidor
+  ainda não sincronizada.
+- **Busca por nome usa a comparação do dialeto** (`COLLATE NOCASE` / collation do MySQL) para o
+  índice valer; `LOWER(name)` o ignoraria.
+- **Teto de saldo 999.999.999.999.999 bronze.** O primeiro teto (9×10^15, "abaixo de 2^53") estava
+  errado: o Vault recebe `bronze / 100`, e `8_999_999_999_999_999 / 100` volta do `double` como
+  `…998`. Só decimais de até 15 dígitos significativos voltam idênticos.
+- **Prova de regressão feita:** conversão em ponto flutuante, escrita externa contada duas vezes,
+  órfão não reaplicado, conta saindo do cache devendo, ausência de lápide, ausência de reserva,
+  reserva devolvida cheia e o teto antigo foram reconstruídos e cada um derruba a suíte.

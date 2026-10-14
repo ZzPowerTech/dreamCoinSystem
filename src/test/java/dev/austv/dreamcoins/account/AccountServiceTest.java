@@ -449,6 +449,19 @@ class AccountServiceTest {
     assertFalse(service.isLoaded(alice), "quitou com o banco: sai do cache");
   }
 
+  /** Re-revisão do PR #1 (M-b): reserva absurda não pode estourar o saldo interno. */
+  @Test
+  void outOfRangeOfflineChangeIsRefusedBeforeBecomingAReservation() throws Exception {
+    service.preload(bob, "bob", 5_000);
+    assertEquals(Outcome.INSUFFICIENT, service.applyOffline(bob, -Long.MAX_VALUE).get().outcome());
+    assertEquals(Outcome.INSUFFICIENT, service.applyOffline(bob, Long.MIN_VALUE).get().outcome());
+    assertEquals(Outcome.EXCEEDS_MAX, service.applyOffline(bob, MAX + 1).get().outcome());
+    online.add(bob);
+    service.join(bob, "bob");
+    assertEquals(OptionalLong.of(100), service.balance(bob));
+    assertEquals(Outcome.INSUFFICIENT, service.withdraw(bob, 101));
+  }
+
   @Test
   void offlineChangeToACachedAccountGoesThroughTheCache() throws Exception {
     login(bob, "bob");

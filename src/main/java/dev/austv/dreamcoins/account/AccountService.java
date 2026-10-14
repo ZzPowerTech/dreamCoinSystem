@@ -362,6 +362,13 @@ public final class AccountService {
    * voo (ver a terceira invariante do {@link AccountLedger}).
    */
   public CompletableFuture<GuardedResult> applyOffline(UUID uuid, long delta) {
+    // Fora da faixa é recusado antes de virar reserva: duas reservas de Long.MAX_VALUE estourariam
+    // o saldo interno, e -Long.MIN_VALUE nem existe.
+    if (delta == Long.MIN_VALUE || Math.abs(delta) > ledger.maxBalance()) {
+      Outcome refusal = delta < 0 ? Outcome.INSUFFICIENT : Outcome.EXCEEDS_MAX;
+      return CompletableFuture.completedFuture(
+          new GuardedResult(refusal, ledger.balance(uuid).orElse(0)));
+    }
     if (ledger.contains(uuid)) {
       Outcome outcome = delta >= 0 ? ledger.deposit(uuid, delta) : ledger.withdraw(uuid, -delta);
       return CompletableFuture.completedFuture(

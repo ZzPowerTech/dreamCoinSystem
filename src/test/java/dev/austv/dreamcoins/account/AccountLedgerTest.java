@@ -257,6 +257,32 @@ class AccountLedgerTest {
     assertEquals(27, balance(bob));
   }
 
+  /** Re-revisão do PR #1 (I1): set sobre saldo descontado virava dinheiro na recusa. */
+  @Test
+  void setIsRefusedWhileAWithdrawalIsPending() {
+    ledger.holdStarted(bob, 500, 6);
+    ledger.loaded(bob, "bob", 100, 5, 0); // interno -400
+    assertEquals(Outcome.BUSY, ledger.set(bob, 0));
+    ledger.holdFinished(bob, 500, 6, false, 0);
+    assertEquals(100, balance(bob));
+    assertEquals(Outcome.OK, ledger.set(bob, 0));
+    assertEquals(0, balance(bob));
+  }
+
+  /** Re-revisão do PR #1 (M-a): o teto vale contra o saldo se a reserva for recusada. */
+  @Test
+  void maxBalanceHoldsAgainstAPendingWithdrawalThatMayBeRefused() {
+    AccountLedger small = new AccountLedger(1000);
+    small.holdStarted(bob, 900, 6);
+    small.loaded(bob, "bob", 100, 5, 0); // interno -800
+    small.loaded(alice, "alice", 1000, 7, 0);
+    assertEquals(Outcome.EXCEEDS_MAX, small.deposit(bob, 1000));
+    assertEquals(Outcome.EXCEEDS_MAX, small.transfer(alice, bob, 1000));
+    assertEquals(Outcome.OK, small.deposit(bob, 900));
+    small.holdFinished(bob, 900, 6, false, 0);
+    assertEquals(1000, small.balance(bob).orElseThrow());
+  }
+
   @Test
   void withdrawalTheLoadAlreadySawIsNotDeductedTwice() {
     ledger.holdStarted(bob, 100, 4);

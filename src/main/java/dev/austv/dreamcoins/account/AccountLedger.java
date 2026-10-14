@@ -51,7 +51,9 @@ public final class AccountLedger {
     OK,
     NO_ACCOUNT,
     INSUFFICIENT,
-    EXCEEDS_MAX
+    EXCEEDS_MAX,
+    /** Há retirada externa aguardando resposta e a operação depende de saber o saldo exato. */
+    BUSY
   }
 
   /** Alteração de saldo ainda não gravada. */
@@ -207,11 +209,23 @@ public final class AccountLedger {
     if (entry == null) {
       return Outcome.NO_ACCOUNT;
     }
-    if (amount > maxBalance - entry.balance) {
+    if (amount > maxBalance - worstCase(entry)) {
       return Outcome.EXCEEDS_MAX;
     }
     apply(entry, amount);
     return Outcome.OK;
+  }
+
+  /**
+   * O saldo se todas as reservas descontadas forem recusadas — a referência para o teto. Com o
+   * saldo cru, uma reserva grande abriria espaço acima do {@code max-balance}.
+   */
+  private static long worstCase(Entry entry) {
+    long held = 0;
+    for (long amount : entry.countedHolds.values()) {
+      held += amount;
+    }
+    return entry.balance + held;
   }
 
   public Outcome withdraw(UUID uuid, long amount) {
@@ -231,12 +245,19 @@ public final class AccountLedger {
    * Define o saldo, gravado como o delta em relação ao que o cache enxerga. Com MySQL em rede, uma
    * escrita de outro servidor ainda não sincronizada continua somada por cima — escrever o valor
    * absoluto a apagaria.
+   *
+   * <p>Recusado ({@link Outcome#BUSY}) enquanto houver reserva descontada: o saldo de referência é
+   * ambíguo até a resposta, e o delta calculado sobre o saldo descontado viraria dinheiro se a
+   * retirada fosse recusada (achado da re-revisão do PR #1).
    */
   public Outcome set(UUID uuid, long target) {
     requireNonNegative(target);
     Entry entry = entries.get(uuid);
     if (entry == null) {
       return Outcome.NO_ACCOUNT;
+    }
+    if (!entry.countedHolds.isEmpty()) {
+      return Outcome.BUSY;
     }
     if (target > maxBalance) {
       return Outcome.EXCEEDS_MAX;
@@ -259,7 +280,7 @@ public final class AccountLedger {
     if (amount > source.balance) {
       return Outcome.INSUFFICIENT;
     }
-    if (amount > maxBalance - target.balance) {
+    if (amount > maxBalance - worstCase(target)) {
       return Outcome.EXCEEDS_MAX;
     }
     apply(source, -amount);

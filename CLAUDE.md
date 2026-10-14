@@ -36,8 +36,8 @@ Versões de dependência fixadas nas que o servidor **roda**, não nas mais rece
 4. **Só três moedas**: ouro, prata, bronze. "cobre" **não** é alias.
 5. **Persistência por delta atômico** (`balance = balance + ?`), nunca por valor absoluto: dois
    servidores no mesmo MySQL somam em vez de se sobrescrever.
-6. **Saldo nunca negativo** e com teto (`max-balance`, padrão 9×10^15 bronze) para o `double` do
-   Vault continuar exato.
+6. **Saldo nunca negativo** e com teto absoluto de 999.999.999.999.999 bronze (9.999.999.999 ouro):
+   o maior saldo de 15 dígitos, que é o que um `double` devolve idêntico ao Vault.
 
 ## Convenções específicas
 
@@ -88,8 +88,25 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
   conta só entra no cache no join; um pagamento gravado nesse meio não seria visto por nenhum dos
   dois. A escrita fica guardada como órfã por até 5 min e é reaplicada no join se a leitura foi
   anterior a ela.
-- **Flush falho volta ao pendente; o de quem já saiu vai para `detached`** e é reenviado no próximo
-  flush. Sem isso, um quit durante queda de banco sumia com o dinheiro.
+- **Uma conta só sai do cache quando não deve nada ao banco** (revisão do PR #1). Na saída ela fica
+  offline no cache até o último flush confirmar; flush falho volta para a **mesma** entrada, e quem
+  reconecta antes reaproveita a entrada. A primeira versão tirava a conta na hora e guardava o delta
+  falho à parte (`detached`): a sessão nova, lida do banco, não o enxergava e o jogador gastava duas
+  vezes — reproduzido com queda de banco + relog **e** com reconexão rápida sem falha nenhuma.
+- **Lápide** com a sequência da última escrita da sessão que saiu: leitura de pré-login mais antiga
+  que ela é recusada e a conta é relida.
+- **Retirada offline é reserva pessimista**: um login no meio dela já entra descontado, e a recusa
+  devolve só o que de fato foi descontado (devolver o valor cheio de uma reserva cortada no zero
+  criaria dinheiro — o próprio teste de regressão pegou isso). Crédito offline continua otimista.
+- **Conta no cache sempre vai pelo cache**, inclusive em `applyOffline`.
+- **O desligamento recupera flush em voo que falhou**: no `onDisable` a main thread já não roda o
+  callback de falha, então o serviço guarda os lotes em voo e os relê direto do futuro.
+- **O piso em zero do flush não é mais silencioso**: `applyDeltas` devolve o que não pôde debitar e
+  o serviço loga em SEVERE. Só acontece com escrita concorrente de outro servidor.
+- **Janela conhecida (MySQL em rede):** ao trocar de servidor, o pré-login do servidor B pode ler
+  antes de o flush do servidor A confirmar — as sequências são por processo. O resync (padrão 30 s)
+  corrige a exibição, e o piso + log acima registra se algo foi gasto duas vezes nesse meio.
+- **`last_seen`** (gravado só no login) decide de quem é um nome reaproveitado na busca offline.
 - **Conta carregada no pré-login, e falha recusa o login.** Entrar com saldo desconhecido daria
   "conta não carregada" em toda mutação, sem explicação para o jogador.
 - **`onMain` em vez de `thenApplyAsync(fn, main)`.** O `thenApplyAsync` completa a *falha* na
@@ -102,6 +119,9 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
   ainda não sincronizada.
 - **Busca por nome usa a comparação do dialeto** (`COLLATE NOCASE` / collation do MySQL) para o
   índice valer; `LOWER(name)` o ignoraria.
-- **Teto de saldo 9×10^15 bronze**, abaixo de 2^53, para o `double` do Vault ser exato.
-- **Prova de regressão feita:** conversão em ponto flutuante, escrita externa contada duas vezes e
-  órfão não reaplicado foram reconstruídos e derrubam a suíte.
+- **Teto de saldo 999.999.999.999.999 bronze.** O primeiro teto (9×10^15, "abaixo de 2^53") estava
+  errado: o Vault recebe `bronze / 100`, e `8_999_999_999_999_999 / 100` volta do `double` como
+  `…998`. Só decimais de até 15 dígitos significativos voltam idênticos.
+- **Prova de regressão feita:** conversão em ponto flutuante, escrita externa contada duas vezes,
+  órfão não reaplicado, conta saindo do cache devendo, ausência de lápide, ausência de reserva,
+  reserva devolvida cheia e o teto antigo foram reconstruídos e cada um derruba a suíte.

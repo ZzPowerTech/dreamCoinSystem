@@ -5,7 +5,9 @@ PR; os itens marcados **⚠** são os que nenhum teste automático alcança.
 
 ## PR 1 — núcleo, banco e `/saldo`
 
-Preparação: apague `plugins/dreamCoinSystem/` para começar do zero.
+Preparação: apague `plugins/dreamCoinSystem/` para começar do zero. **Obrigatório** se você testou
+uma build anterior às correções da revisão: o schema ganhou a coluna `last_seen` sem migração (o
+plugin ainda não foi ao ar), e um `.db` antigo faz todo login ser recusado.
 
 1. **Boot limpo.** Suba o servidor. Esperado: `Economia pronta (sqlite).` no console, sem aviso;
    `plugins/dreamCoinSystem/` com `config.yml`, `messages.yml` e `dreamcoins.db`.

@@ -95,14 +95,27 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
   vezes — reproduzido com queda de banco + relog **e** com reconexão rápida sem falha nenhuma.
 - **Lápide** com a sequência da última escrita da sessão que saiu: leitura de pré-login mais antiga
   que ela é recusada e a conta é relida.
-- **Retirada offline é reserva pessimista**: um login no meio dela já entra descontado, e a recusa
-  devolve só o que de fato foi descontado (devolver o valor cheio de uma reserva cortada no zero
-  criaria dinheiro — o próprio teste de regressão pegou isso). Crédito offline continua otimista.
+- **Retirada offline é reserva pessimista, descontada inteira e sem piso**: um login no meio dela
+  já entra descontado, e a recusa devolve o valor cheio. O saldo interno pode ficar negativo
+  enquanto a reserva aguarda (negativo já recusa retirada); só `AccountLedger#balance` corta no
+  zero, para exibição. Cortar o desconto no zero criava dinheiro: com um crédito anterior ainda a
+  caminho, a parte cortada nunca era descontada quando a retirada confirmava (seed 832 do fuzz da
+  re-revisão). Crédito offline continua otimista.
+- **No máximo um flush em voo por conta** (re-revisão do PR #1). Com dois, um crédito que falhasse
+  deixava o débito seguinte bater num banco sem o crédito: o piso cortava o débito, o crédito era
+  regravado e o jogador ficava com dinheiro que gastou. O pendente de uma conta com flush em voo
+  espera o resultado dele; só o desligamento pega tudo (`takeAllPending`), depois de esvaziar a fila.
 - **Conta no cache sempre vai pelo cache**, inclusive em `applyOffline`.
 - **O desligamento recupera flush em voo que falhou**: no `onDisable` a main thread já não roda o
   callback de falha, então o serviço guarda os lotes em voo e os relê direto do futuro.
 - **O piso em zero do flush não é mais silencioso**: `applyDeltas` devolve o que não pôde debitar e
-  o serviço loga em SEVERE. Só acontece com escrita concorrente de outro servidor.
+  o serviço loga em SEVERE. Com as regras acima, num servidor único ele não deveria agir; em rede,
+  é a janela de troca de servidor abaixo. Se aparecer em servidor único, é defeito a investigar.
+- **Fuzz de interleavings** (feito pelo revisor, fora do repositório): operações aleatórias contra
+  SQLite real com a main thread manual — depósito, retirada, `applyOffline` ±, flush, falha
+  simulada, resync, quit, reconexão com pré-login bloqueado e login duplicado — checando cache ==
+  banco com tudo assentado e banco == soma das mutações aceitas no fim. 0 falhas em 5000 seeds.
+  Vale portar para `src/test` quando o `/pagar` entrar.
 - **Janela conhecida (MySQL em rede):** ao trocar de servidor, o pré-login do servidor B pode ler
   antes de o flush do servidor A confirmar — as sequências são por processo. O resync (padrão 30 s)
   corrige a exibição, e o piso + log acima registra se algo foi gasto duas vezes nesse meio.

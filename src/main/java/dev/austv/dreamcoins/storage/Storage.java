@@ -26,9 +26,13 @@ public interface Storage extends AutoCloseable {
 
   /**
    * Grava os deltas do cache numa transação só — ou todos, ou nenhum. O saldo resultante nunca fica
-   * negativo (o cache já validou; o piso só protege de escrita concorrente de outro servidor).
+   * negativo: o cache já validou, então isso só acontece com escrita concorrente de outro servidor,
+   * e aí o saldo é zerado.
+   *
+   * @return o que <b>não</b> pôde ser aplicado (o resto além do zero, ou o delta inteiro de conta
+   *     que não existe mais) — dinheiro gasto que o banco não tinha; quem chama precisa registrar
    */
-  void applyDeltas(List<Delta> deltas) throws SQLException;
+  List<Delta> applyDeltas(List<Delta> deltas) throws SQLException;
 
   /**
    * Alteração validada no próprio banco, para contas fora do cache: só aplica se o resultado ficar

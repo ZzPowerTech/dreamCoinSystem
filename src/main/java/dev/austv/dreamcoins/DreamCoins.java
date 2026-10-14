@@ -11,6 +11,7 @@ import dev.austv.dreamcoins.storage.SqliteStorage;
 import dev.austv.dreamcoins.storage.Storage;
 import dev.austv.dreamcoins.storage.StorageType;
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.logging.Level;
@@ -37,7 +38,7 @@ public final class DreamCoins extends JavaPlugin {
     try {
       storage.open();
     } catch (SQLException | RuntimeException error) {
-      getLogger().log(Level.SEVERE, "Não foi possível abrir o banco de dados; desligando.", error);
+      getLogger().log(Level.SEVERE, "Não foi possível abrir o banco; desligando.", error);
       storage.close();
       getServer().getPluginManager().disablePlugin(this);
       return;
@@ -66,7 +67,8 @@ public final class DreamCoins extends JavaPlugin {
     Objects.requireNonNull(getCommand("saldo")).setTabCompleter(balance);
 
     scheduleTasks();
-    getLogger().info("Economia pronta (" + config.storageType().name().toLowerCase(java.util.Locale.ROOT) + ").");
+    String backend = config.storageType().name().toLowerCase(Locale.ROOT);
+    getLogger().info("Economia pronta (" + backend + ").");
   }
 
   @Override

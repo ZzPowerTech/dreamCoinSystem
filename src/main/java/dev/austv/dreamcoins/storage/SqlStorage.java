@@ -11,6 +11,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +33,10 @@ public abstract class SqlStorage implements Storage {
 
   protected abstract List<String> schemaStatements();
 
-  /** {@code INSERT} que não falha se a conta já existe: (uuid, name, balance, updated_at). */
+  /**
+   * {@code INSERT} que não falha se a conta já existe: (uuid, name, balance, updated_at,
+   * last_seen).
+   */
   protected abstract String insertIgnoreSql();
 
   /**
@@ -83,12 +87,16 @@ public abstract class SqlStorage implements Storage {
             insert.setString(2, name);
             insert.setLong(3, startingBalance);
             insert.setLong(4, now);
+            insert.setLong(5, now);
             insert.executeUpdate();
           }
+          // last_seen só muda aqui: é ele que decide de quem é um nome reaproveitado.
           try (PreparedStatement rename =
-              connection.prepareStatement("UPDATE dc_accounts SET name = ? WHERE uuid = ?")) {
+              connection.prepareStatement(
+                  "UPDATE dc_accounts SET name = ?, last_seen = ? WHERE uuid = ?")) {
             rename.setString(1, name);
-            rename.setString(2, uuid.toString());
+            rename.setLong(2, now);
+            rename.setString(3, uuid.toString());
             rename.executeUpdate();
           }
           return balanceOf(connection, uuid).orElseThrow();
@@ -96,36 +104,74 @@ public abstract class SqlStorage implements Storage {
   }
 
   @Override
-  public void applyDeltas(List<Delta> deltas) throws SQLException {
-    if (deltas.isEmpty()) {
-      return;
+  public List<Delta> applyDeltas(List<Delta> deltas) throws SQLException {
+    List<Delta> nonZero = deltas.stream().filter(d -> d.amount() != 0).toList();
+    if (nonZero.isEmpty()) {
+      return List.of();
     }
-    inTransaction(
+    return inTransaction(
         connection -> {
+          long now = System.currentTimeMillis();
+          int[] counts;
           try (PreparedStatement update =
               connection.prepareStatement(
                   """
-                  UPDATE dc_accounts
-                  SET balance = CASE WHEN balance + ? < 0 THEN 0 ELSE balance + ? END,
-                      updated_at = ?
-                  WHERE uuid = ?
+                  UPDATE dc_accounts SET balance = balance + ?, updated_at = ?
+                  WHERE uuid = ? AND balance + ? >= 0
                   """)) {
-            long now = System.currentTimeMillis();
-            for (Delta delta : deltas) {
+            for (Delta delta : nonZero) {
               update.setLong(1, delta.amount());
-              update.setLong(2, delta.amount());
-              update.setLong(3, now);
-              update.setString(4, delta.uuid().toString());
+              update.setLong(2, now);
+              update.setString(3, delta.uuid().toString());
+              update.setLong(4, delta.amount());
               update.addBatch();
             }
-            update.executeBatch();
+            counts = update.executeBatch();
           }
-          return null;
+          List<Delta> unapplied = new ArrayList<>();
+          for (int i = 0; i < counts.length; i++) {
+            if (counts[i] != 0) {
+              continue; // 1, ou SUCCESS_NO_INFO
+            }
+            unapplied.add(clampToZero(connection, nonZero.get(i), now));
+          }
+          return unapplied;
         });
+  }
+
+  /**
+   * O delta deixaria o saldo negativo: aplica o que dá (zera) e devolve o resto. Só acontece com
+   * escrita concorrente de outro servidor — o cache deste já validou o saldo —, e quem chama
+   * registra o resto, porque ele é dinheiro gasto que o banco não tinha.
+   */
+  private static Delta clampToZero(Connection connection, Delta delta, long now)
+      throws SQLException {
+    OptionalLong current = balanceOf(connection, delta.uuid());
+    if (current.isEmpty()) {
+      return delta; // conta apagada do banco: nada aplicado
+    }
+    try (PreparedStatement zero =
+        connection.prepareStatement(
+            "UPDATE dc_accounts SET balance = 0, updated_at = ? WHERE uuid = ?")) {
+      zero.setLong(1, now);
+      zero.setString(2, delta.uuid().toString());
+      zero.executeUpdate();
+    }
+    return new Delta(delta.uuid(), delta.amount() + current.getAsLong());
   }
 
   @Override
   public GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance) throws SQLException {
+    // Fora da faixa nem chega ao SQL: o MySQL estouraria BIGINT em vez de recusar.
+    if (delta > maxBalance || delta < -maxBalance || delta == 0) {
+      OptionalLong current = balance(uuid);
+      if (current.isEmpty()) {
+        return new GuardedResult(Outcome.NO_ACCOUNT, 0);
+      }
+      Outcome outcome =
+          delta == 0 ? Outcome.OK : delta < 0 ? Outcome.INSUFFICIENT : Outcome.EXCEEDS_MAX;
+      return new GuardedResult(outcome, current.getAsLong());
+    }
     return inTransaction(
         connection -> {
           int changed;
@@ -169,7 +215,7 @@ public abstract class SqlStorage implements Storage {
             connection.prepareStatement(
                 "SELECT uuid, name, balance FROM dc_accounts WHERE "
                     + nameMatchSql()
-                    + " ORDER BY updated_at DESC LIMIT 1")) {
+                    + " ORDER BY last_seen DESC LIMIT 1")) {
       select.setString(1, name);
       try (ResultSet rs = select.executeQuery()) {
         if (!rs.next()) {
@@ -189,7 +235,7 @@ public abstract class SqlStorage implements Storage {
     try (Connection connection = dataSource.getConnection()) {
       for (int from = 0; from < all.size(); from += IN_CHUNK) {
         List<UUID> chunk = all.subList(from, Math.min(all.size(), from + IN_CHUNK));
-        String marks = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+        String marks = String.join(",", Collections.nCopies(chunk.size(), "?"));
         try (PreparedStatement select =
             connection.prepareStatement(
                 "SELECT uuid, balance FROM dc_accounts WHERE uuid IN (" + marks + ")")) {

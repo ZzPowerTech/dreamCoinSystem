@@ -80,10 +80,39 @@ class SqliteStorageTest {
   }
 
   @Test
-  void flushNeverDrivesTheBalanceNegative() throws Exception {
+  void flushNeverDrivesTheBalanceNegativeAndReportsWhatItCouldNotDebit() throws Exception {
     storage.loadOrCreate(alice, "alice", 10);
-    storage.applyDeltas(List.of(new Delta(alice, -50)));
+    storage.loadOrCreate(bob, "bob", 10);
+    List<Delta> unapplied =
+        storage.applyDeltas(List.of(new Delta(alice, -50), new Delta(bob, -5)));
+    assertEquals(List.of(new Delta(alice, -40)), unapplied);
     assertEquals(OptionalLong.of(0), storage.balance(alice));
+    assertEquals(OptionalLong.of(5), storage.balance(bob));
+  }
+
+  @Test
+  void flushToADeletedAccountIsReportedWhole() throws Exception {
+    assertEquals(List.of(new Delta(alice, 7)), storage.applyDeltas(List.of(new Delta(alice, 7))));
+  }
+
+  @Test
+  void reusedNameResolvesToWhoeverLoggedInLast() throws Exception {
+    storage.loadOrCreate(alice, "Fox", 1);
+    Thread.sleep(5);
+    storage.loadOrCreate(bob, "Fox", 2); // alice trocou de nome e não voltou; bob pegou "Fox"
+    Thread.sleep(5);
+    storage.applyDeltas(List.of(new Delta(alice, 10))); // gravar saldo não é "ser visto"
+    assertEquals(bob, storage.findByName("fox").orElseThrow().uuid());
+  }
+
+  @Test
+  void guardedWriteOutOfRangeNeverReachesTheDatabase() throws Exception {
+    storage.loadOrCreate(alice, "alice", 100);
+    assertEquals(Outcome.EXCEEDS_MAX, storage.applyGuarded(alice, Long.MAX_VALUE, MAX).outcome());
+    assertEquals(
+        Outcome.INSUFFICIENT, storage.applyGuarded(alice, Long.MIN_VALUE + 1, MAX).outcome());
+    assertEquals(new GuardedResult(Outcome.OK, 100), storage.applyGuarded(alice, 0, MAX));
+    assertEquals(Outcome.NO_ACCOUNT, storage.applyGuarded(bob, 0, MAX).outcome());
   }
 
   @Test
@@ -115,7 +144,8 @@ class SqliteStorageTest {
   void balancesInBulk() throws Exception {
     storage.loadOrCreate(alice, "alice", 1);
     storage.loadOrCreate(bob, "bob", 2);
-    assertEquals(Map.of(alice, 1L, bob, 2L), storage.balances(List.of(alice, bob, UUID.randomUUID())));
+    assertEquals(
+        Map.of(alice, 1L, bob, 2L), storage.balances(List.of(alice, bob, UUID.randomUUID())));
     assertEquals(Map.of(), storage.balances(List.of()));
   }
 }

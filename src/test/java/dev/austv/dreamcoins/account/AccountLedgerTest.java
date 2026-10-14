@@ -103,55 +103,139 @@ class AccountLedgerTest {
     assertEquals(List.of(new Delta(alice, 6)), ledger.takePending());
   }
 
+  // ---- saída do cache: só quando não deve nada ao banco ----
+
   @Test
-  void failedFlushOfAccountThatAlreadyLeftIsHandedBack() {
+  void accountWithoutWritesLeavesImmediately() {
     ledger.loaded(alice, "alice", 100, 1, 0);
-    ledger.deposit(alice, 5);
+    ledger.markOffline(alice, 0);
+    assertFalse(ledger.contains(alice));
+  }
+
+  @Test
+  void accountStaysCachedUntilItsLastFlushIsConfirmed() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.withdraw(alice, 60);
+    ledger.inFlight(List.of(ledger.takePending(alice).orElseThrow()), 3);
+    ledger.markOffline(alice, 0);
+    assertTrue(ledger.contains(alice));
+    ledger.flushCompleted(3, 0);
+    assertFalse(ledger.contains(alice));
+  }
+
+  @Test
+  void failedFlushAfterQuitReturnsToTheSameEntry() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.withdraw(alice, 60);
     Delta quit = ledger.takePending(alice).orElseThrow();
     ledger.inFlight(List.of(quit), 3);
-    ledger.remove(alice);
-    assertEquals(List.of(new Delta(alice, 5)), ledger.flushFailed(3, List.of(quit)));
+    ledger.markOffline(alice, 0);
+    assertEquals(List.of(), ledger.flushFailed(3, List.of(quit)));
+    assertTrue(ledger.contains(alice));
+    assertEquals(List.of(new Delta(alice, -60)), ledger.takePending());
   }
 
-  // ---- reconciliação com escritas que o cache não fez ----
+  @Test
+  void rejoinBeforeTheFlushReusesTheCachedEntry() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.withdraw(alice, 60);
+    ledger.inFlight(List.of(ledger.takePending(alice).orElseThrow()), 3);
+    ledger.markOffline(alice, 0);
+    assertTrue(ledger.reattach(alice, "alice"));
+    assertEquals(40, balance(alice));
+    ledger.flushCompleted(3, 0);
+    assertTrue(ledger.contains(alice), "online de novo: não sai do cache");
+  }
 
   @Test
-  void externalWriteAfterTheLoadIsAddedToTheCache() {
+  void readOlderThanTheLastWriteOfThePreviousSessionIsRefused() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.withdraw(alice, 60);
+    ledger.inFlight(List.of(ledger.takePending(alice).orElseThrow()), 5);
+    ledger.markOffline(alice, 0);
+    ledger.flushCompleted(5, 0);
+    // pré-login da reconexão leu no seq 4, antes do flush do quit
+    assertFalse(ledger.loaded(alice, "alice", 100, 4, 0));
+    assertFalse(ledger.contains(alice));
+    assertTrue(ledger.loaded(alice, "alice", 40, 6, 0));
+    assertEquals(40, balance(alice));
+  }
+
+  // ---- créditos externos ----
+
+  @Test
+  void externalCreditAfterTheLoadIsAddedToTheCache() {
     ledger.loaded(alice, "alice", 100, 5, 0);
-    ledger.externalApplied(alice, 40, 6, 0);
+    ledger.creditApplied(alice, 40, 6, 0);
     assertEquals(140, balance(alice));
   }
 
   @Test
-  void externalWriteBeforeTheLoadWasAlreadyReadAndIsNotCountedTwice() {
+  void externalCreditBeforeTheLoadWasAlreadyReadAndIsNotCountedTwice() {
     ledger.loaded(alice, "alice", 140, 6, 0);
-    ledger.externalApplied(alice, 40, 5, 0);
+    ledger.creditApplied(alice, 40, 5, 0);
     assertEquals(140, balance(alice));
   }
 
   @Test
-  void externalWriteThatFinishesBeforeTheJoinIsReplayedIfTheLoadMissedIt() {
-    // pré-login leu o banco no seq 5; o pagamento offline foi gravado no seq 6 e terminou
-    // antes de o jogador entrar no cache
-    ledger.externalApplied(alice, 40, 6, 0);
+  void externalCreditThatFinishesBeforeTheJoinIsReplayedIfTheLoadMissedIt() {
+    ledger.creditApplied(alice, 40, 6, 0);
     ledger.loaded(alice, "alice", 100, 5, 0);
     assertEquals(140, balance(alice));
   }
 
   @Test
   void orphanThatTheLoadAlreadySawIsNotReplayed() {
-    ledger.externalApplied(alice, 40, 4, 0);
+    ledger.creditApplied(alice, 40, 4, 0);
     ledger.loaded(alice, "alice", 140, 5, 0);
     assertEquals(140, balance(alice));
   }
 
   @Test
   void orphansExpire() {
-    ledger.externalApplied(alice, 40, 6, 1_000);
-    ledger.pruneOrphans(1_000 + 60_001, 60_000);
+    ledger.creditApplied(alice, 40, 6, 1_000);
+    ledger.prune(1_000 + 60_001, 60_000);
     ledger.loaded(alice, "alice", 100, 5, 0);
     assertEquals(100, balance(alice));
   }
+
+  // ---- retiradas externas: reserva pessimista ----
+
+  @Test
+  void withdrawalInFlightIsAlreadyDeductedFromALoadThatMissedIt() {
+    ledger.holdStarted(bob, 100, 6);
+    ledger.loaded(bob, "bob", 100, 5, 0);
+    assertEquals(0, balance(bob));
+    assertEquals(Outcome.INSUFFICIENT, ledger.withdraw(bob, 1));
+    ledger.holdFinished(bob, 100, 6, true, 0);
+    assertEquals(0, balance(bob));
+  }
+
+  @Test
+  void refusedWithdrawalReleasesTheReservation() {
+    ledger.holdStarted(bob, 100, 6);
+    ledger.loaded(bob, "bob", 100, 5, 0);
+    ledger.holdFinished(bob, 100, 6, false, 0);
+    assertEquals(100, balance(bob));
+  }
+
+  @Test
+  void withdrawalTheLoadAlreadySawIsNotDeductedTwice() {
+    ledger.holdStarted(bob, 100, 4);
+    ledger.loaded(bob, "bob", 0, 5, 0);
+    ledger.holdFinished(bob, 100, 4, true, 0);
+    assertEquals(0, balance(bob));
+  }
+
+  @Test
+  void withdrawalFinishedBeforeTheJoinIsReplayedAsNegativeOrphan() {
+    ledger.holdStarted(bob, 30, 6);
+    ledger.holdFinished(bob, 30, 6, true, 0);
+    ledger.loaded(bob, "bob", 100, 5, 0);
+    assertEquals(70, balance(bob));
+  }
+
+  // ---- resync ----
 
   @Test
   void resyncKeepsWritesTheReadCouldNotHaveSeen() {
@@ -178,16 +262,8 @@ class AccountLedgerTest {
     ledger.loaded(alice, "alice", 100, 1, 0);
     ledger.deposit(alice, 10);
     ledger.inFlight(ledger.takePending(), 3);
-    ledger.flushCompleted(3);
-    ledger.resynced(alice, 110, 2); // leitura anterior ao flush, mas o flush já saiu da lista
+    ledger.flushCompleted(3, 0);
+    ledger.resynced(alice, 110, 4);
     assertEquals(110, balance(alice));
-  }
-
-  @Test
-  void removeForgetsTheAccount() {
-    ledger.loaded(alice, "alice", 100, 1, 0);
-    assertTrue(ledger.contains(alice));
-    ledger.remove(alice);
-    assertFalse(ledger.contains(alice));
   }
 }

@@ -75,6 +75,18 @@ class PluginConfigTest {
   }
 
   @Test
+  void zeroMaxBalanceMeansTheAbsoluteCeilingWithoutWarning() throws Exception {
+    PluginConfig config =
+        parse(
+            """
+            accounts:
+              max-balance: "0"
+            """);
+    assertEquals(PluginConfig.MAX_BALANCE_CEILING, config.maxBalance());
+    assertTrue(warnings.isEmpty());
+  }
+
+  @Test
   void startingBalanceAboveMaxIsCapped() throws Exception {
     PluginConfig config =
         parse(

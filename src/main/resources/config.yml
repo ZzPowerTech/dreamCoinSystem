@@ -17,12 +17,15 @@ storage:
     username: dreamcoins
     password: ""
     pool-size: 5
+    # true exige SSL (sslMode=REQUIRED); false é o normal para banco na rede local.
+    use-ssl: false
 
 accounts:
   # Saldo de quem entra pela primeira vez.
   starting-balance: "0"
-  # Ninguém passa deste saldo. Teto absoluto: 90000000000 ouro.
-  max-balance: "90000000000 ouro"
+  # Ninguém passa deste saldo. "0" = teto absoluto (9999999999 ouro, o maior que o Vault
+  # representa sem erro de arredondamento).
+  max-balance: "9999999999 ouro"
   # A cada quantos segundos o que mudou é gravado no banco (também grava ao sair).
   flush-interval-seconds: 10
   # Só MySQL: a cada quantos segundos o saldo dos online é relido do banco,

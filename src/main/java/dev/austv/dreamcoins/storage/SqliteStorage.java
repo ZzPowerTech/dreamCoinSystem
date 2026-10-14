@@ -50,7 +50,8 @@ public final class SqliteStorage extends SqlStorage {
           uuid       TEXT    NOT NULL PRIMARY KEY,
           name       TEXT    NOT NULL,
           balance    INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
-          updated_at INTEGER NOT NULL DEFAULT 0
+          updated_at INTEGER NOT NULL DEFAULT 0,
+          last_seen  INTEGER NOT NULL DEFAULT 0
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_dc_accounts_name ON dc_accounts(name COLLATE NOCASE)");
@@ -63,6 +64,7 @@ public final class SqliteStorage extends SqlStorage {
 
   @Override
   protected String insertIgnoreSql() {
-    return "INSERT OR IGNORE INTO dc_accounts(uuid, name, balance, updated_at) VALUES(?, ?, ?, ?)";
+    return "INSERT OR IGNORE INTO dc_accounts(uuid, name, balance, updated_at, last_seen)"
+        + " VALUES(?, ?, ?, ?, ?)";
   }
 }

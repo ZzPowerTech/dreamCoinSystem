@@ -9,7 +9,7 @@ import java.util.function.Consumer;
 import org.bukkit.configuration.ConfigurationSection;
 
 /**
- * O {@code config.yml} lido e validado. Valor inválido nunca derruba o plugin: vira aviso no console
+ * O {@code config.yml} lido e validado. Valor inválido nunca derruba o plugin: vira aviso no log
  * e cai no padrão — o aviso nomeia a chave, que é onde o admin precisa olhar.
  */
 public record PluginConfig(
@@ -22,10 +22,12 @@ public record PluginConfig(
     int resyncIntervalSeconds) {
 
   /**
-   * Teto absoluto do saldo, em bronze (90 bilhões de ouro). Abaixo de 2^53, para que o {@code
-   * double} que o Vault devolve represente o saldo exatamente.
+   * Teto absoluto do saldo, em bronze (9.999.999.999 ouro, 999 prata e 99 bronze). O Vault recebe
+   * {@code bronze / 100} num {@code double}, e só decimais de até 15 dígitos significativos voltam
+   * idênticos de um {@code double} — este é o maior saldo de 15 dígitos. Um teto abaixo de 2^53
+   * não basta: {@code 8_999_999_999_999_999 / 100} já volta como {@code …998}.
    */
-  public static final long MAX_BALANCE_CEILING = 9_000_000_000_000_000L;
+  public static final long MAX_BALANCE_CEILING = 999_999_999_999_999L;
 
   public static PluginConfig from(ConfigurationSection root, Consumer<String> warn) {
     String rawType = root.getString("storage.type", "sqlite");
@@ -44,12 +46,15 @@ public record PluginConfig(
             root.getString("storage.mysql.database", "dreamcoins"),
             root.getString("storage.mysql.username", "dreamcoins"),
             root.getString("storage.mysql.password", ""),
-            root.getInt("storage.mysql.pool-size", 5));
+            root.getInt("storage.mysql.pool-size", 5),
+            root.getBoolean("storage.mysql.use-ssl", false));
 
+    // "0" é o "sem teto próprio" do parseConfig: vale o teto absoluto, sem aviso.
     long max = money(root, "accounts.max-balance", MAX_BALANCE_CEILING, warn);
-    if (max > MAX_BALANCE_CEILING || max == 0) {
-      warn.accept(
-          "accounts.max-balance acima do teto (90.000.000.000 ouro) ou zero; usando o teto.");
+    if (max == 0) {
+      max = MAX_BALANCE_CEILING;
+    } else if (max > MAX_BALANCE_CEILING) {
+      warn.accept("accounts.max-balance acima do teto absoluto (9999999999 ouro); usando o teto.");
       max = MAX_BALANCE_CEILING;
     }
     long starting = money(root, "accounts.starting-balance", 0, warn);

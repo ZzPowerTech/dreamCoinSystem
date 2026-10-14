@@ -2,6 +2,7 @@ package dev.austv.dreamcoins.money;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import dev.austv.dreamcoins.config.PluginConfig;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
@@ -43,6 +44,18 @@ class VaultAmountsTest {
   @Test
   void negativeZeroIsZero() {
     assertEquals(OptionalLong.of(0), VaultAmounts.toBronzeFloor(-0.0));
+  }
+
+  /** Todo saldo até o teto precisa ir ao Vault e voltar idêntico, nos dois arredondamentos. */
+  @Test
+  void balancesUpToTheCeilingRoundTripThroughTheVaultDouble() {
+    long ceiling = PluginConfig.MAX_BALANCE_CEILING;
+    long[] samples = {ceiling, ceiling - 1, ceiling - 99, 123_456_789_012_345L, 1, 99, 100};
+    for (long bronze : samples) {
+      double vault = VaultAmounts.toVault(bronze);
+      assertEquals(OptionalLong.of(bronze), VaultAmounts.toBronzeFloor(vault), "floor " + bronze);
+      assertEquals(OptionalLong.of(bronze), VaultAmounts.toBronzeCeil(vault), "ceil " + bronze);
+    }
   }
 
   @Test

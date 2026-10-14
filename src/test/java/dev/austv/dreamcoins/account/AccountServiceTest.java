@@ -24,6 +24,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 import org.junit.jupiter.api.AfterEach;
@@ -68,12 +69,12 @@ class AccountServiceTest {
     }
 
     @Override
-    public void applyDeltas(List<Delta> deltas) throws SQLException {
+    public List<Delta> applyDeltas(List<Delta> deltas) throws SQLException {
       if (failNextFlush) {
         failNextFlush = false;
         throw new SQLException("simulated outage");
       }
-      delegate.applyDeltas(deltas);
+      return delegate.applyDeltas(deltas);
     }
 
     @Override
@@ -223,7 +224,7 @@ class AccountServiceTest {
     service.quit(alice);
     settle();
     assertEquals(100, stored(alice));
-    service.flushAll(); // a conta já não está no cache; o delta foi guardado à parte
+    service.flushAll(); // a entrada ficou no cache, devendo: o delta voltou para ela
     settle();
     assertEquals(105, stored(alice));
   }
@@ -263,11 +264,13 @@ class AccountServiceTest {
   }
 
   @Test
-  void offlinePaymentToAnAccountThatJustCameOnlineIsAddedToTheCache() throws Exception {
-    login(bob, "bob");
-    // gravado direto no banco enquanto bob está no cache (ex.: Vault vindo de outro servidor)
-    service.applyOffline(bob, 40);
-    settle();
+  void offlineCreditFinishingAfterTheJoinIsAddedToTheCache() throws Exception {
+    service.preload(bob, "bob", 5_000); // lê 100
+    service.applyOffline(bob, 40); // gravado depois da leitura
+    db.submit(() -> null).future().get();
+    online.add(bob);
+    service.join(bob, "bob"); // entra com 100; o callback do crédito ainda não rodou
+    main.runAll();
     assertEquals(OptionalLong.of(140), service.balance(bob));
     service.flushAll();
     settle();
@@ -316,5 +319,126 @@ class AccountServiceTest {
       reopened.open();
       assertEquals(OptionalLong.of(109), reopened.balance(alice));
     }
+  }
+
+  @Test
+  void flushThatFailsDuringShutdownIsRecoveredByTheFinalWrite() throws Exception {
+    login(alice, "alice");
+    service.deposit(alice, 9);
+    storage.failNextFlush = true;
+    service.flushAll(); // o callback de falha nunca roda: a "main thread" não é esvaziada
+    service.shutdown();
+    try (SqliteStorage reopened = new SqliteStorage(dir.resolve("coins.db"))) {
+      reopened.open();
+      assertEquals(OptionalLong.of(109), reopened.balance(alice));
+    }
+  }
+
+  // ---- regressões da revisão do PR #1: nenhum cenário pode criar dinheiro ----
+
+  @Test
+  void outageOnQuitThenRelogCannotSpendTwice() throws Exception {
+    login(alice, "alice");
+    service.withdraw(alice, 60);
+    storage.failNextFlush = true;
+    online.remove(alice);
+    service.quit(alice);
+    settle();
+    login(alice, "alice");
+    assertEquals(OptionalLong.of(40), service.balance(alice));
+    assertEquals(Outcome.INSUFFICIENT, service.withdraw(alice, 100));
+    service.flushAll();
+    settle();
+    assertEquals(40, stored(alice));
+  }
+
+  @Test
+  void outageCallbackAfterTheRejoinStillLandsOnTheRightEntry() throws Exception {
+    login(alice, "alice");
+    service.withdraw(alice, 60);
+    storage.failNextFlush = true;
+    online.remove(alice);
+    service.quit(alice);
+    db.submit(() -> null).future().get(); // flush falhou, mas o callback ainda não rodou
+    service.preload(alice, "alice", 5_000);
+    online.add(alice);
+    service.join(alice, "alice");
+    main.runAll();
+    assertEquals(OptionalLong.of(40), service.balance(alice));
+    service.flushAll();
+    settle();
+    assertEquals(40, stored(alice));
+  }
+
+  @Test
+  void fastReconnectWithPreloginBeforeTheQuitFlushIsNotStale() throws Exception {
+    login(alice, "alice");
+    service.withdraw(alice, 60);
+    CountDownLatch gate = new CountDownLatch(1);
+    db.submit(
+        () -> {
+          gate.await();
+          return null;
+        });
+    Thread prelogin =
+        new Thread(
+            () -> {
+              try {
+                service.preload(alice, "alice", 5_000);
+              } catch (Exception e) {
+                throw new IllegalStateException(e);
+              }
+            });
+    prelogin.start();
+    Thread.sleep(200); // o pré-login novo entra na fila antes do flush do quit
+    online.remove(alice);
+    service.quit(alice);
+    gate.countDown();
+    prelogin.join();
+    settle(); // o flush do quit confirma e a conta sai do cache, deixando a lápide
+    online.add(alice);
+    service.join(alice, "alice"); // leitura do pré-login é anterior ao flush: recusada e relida
+    settle();
+    assertEquals(OptionalLong.of(40), service.balance(alice));
+    assertEquals(40, stored(alice));
+  }
+
+  @Test
+  void offlineWithdrawalRacingTheJoinCannotBeSpentAgain() throws Exception {
+    service.preload(bob, "bob", 5_000); // lê 100
+    CompletableFuture<GuardedResult> take = service.applyOffline(bob, -100);
+    db.submit(() -> null).future().get(); // gravado no banco, callback ainda pendente
+    online.add(bob);
+    service.join(bob, "bob");
+    assertEquals(OptionalLong.of(0), service.balance(bob));
+    assertEquals(Outcome.INSUFFICIENT, service.withdraw(bob, 100));
+    main.runAll();
+    assertEquals(new GuardedResult(Outcome.OK, 0), take.get());
+    assertEquals(OptionalLong.of(0), service.balance(bob));
+    service.flushAll();
+    settle();
+    assertEquals(0, stored(bob));
+  }
+
+  @Test
+  void refusedOfflineWithdrawalGivesTheReservationBack() throws Exception {
+    service.preload(bob, "bob", 5_000); // lê 100
+    CompletableFuture<GuardedResult> take = service.applyOffline(bob, -500);
+    db.submit(() -> null).future().get();
+    online.add(bob);
+    service.join(bob, "bob");
+    main.runAll();
+    assertEquals(Outcome.INSUFFICIENT, take.get().outcome());
+    assertEquals(OptionalLong.of(100), service.balance(bob));
+  }
+
+  @Test
+  void offlineChangeToACachedAccountGoesThroughTheCache() throws Exception {
+    login(bob, "bob");
+    GuardedResult result = service.applyOffline(bob, -30).get();
+    assertEquals(new GuardedResult(Outcome.OK, 70), result);
+    service.flushAll();
+    settle();
+    assertEquals(70, stored(bob));
   }
 }

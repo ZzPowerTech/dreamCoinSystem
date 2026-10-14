@@ -8,6 +8,7 @@ import dev.austv.dreamcoins.storage.SequencedExecutor.Submitted;
 import dev.austv.dreamcoins.storage.Storage;
 import dev.austv.dreamcoins.storage.StoredAccount;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -17,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.logging.Level;
@@ -39,7 +41,10 @@ public final class AccountService {
 
   private record Preloaded(String name, long balance, long seq, long atMillis) {}
 
-  private static final long ORPHAN_MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
+  /** Um flush submetido e ainda não confirmado na main thread. */
+  private record Batch(List<Delta> deltas, CompletableFuture<List<Delta>> future) {}
+
+  private static final long STALE_MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
   private final Storage storage;
   private final SequencedExecutor db;
@@ -51,8 +56,12 @@ public final class AccountService {
 
   private final Map<UUID, Preloaded> preloaded = new ConcurrentHashMap<>();
 
-  /** Deltas de contas que já saíram do cache e cujo flush falhou. Main thread. */
-  private final List<Delta> detached = new ArrayList<>();
+  /**
+   * Flushes em voo, por sequência. Main thread. Existe para o desligamento: ali o callback de falha
+   * já não roda (a main thread não aceita tarefas), e sem este registro um flush que falhasse no
+   * último instante sumiria sem log.
+   */
+  private final Map<Long, Batch> batches = new LinkedHashMap<>();
 
   private volatile long startingBalance;
 
@@ -100,15 +109,22 @@ public final class AccountService {
     preloaded.put(uuid, new Preloaded(name, balance, load.seq(), clock.getAsLong()));
   }
 
-  /** O jogador entrou: a conta passa para o cache. */
+  /**
+   * O jogador entrou. Se a entrada da sessão anterior ainda está no cache (devendo flush), ela é a
+   * verdade. Senão vale a leitura do pré-login — a menos que seja mais antiga que a última escrita
+   * da sessão anterior (reconexão rápida), caso em que a conta é relida.
+   */
   public void join(UUID uuid, String name) {
     Preloaded loaded = preloaded.remove(uuid);
-    if (loaded != null) {
-      ledger.loaded(uuid, name, loaded.balance(), loaded.seq(), clock.getAsLong());
+    if (ledger.reattach(uuid, name)) {
       return;
     }
-    // Sem pré-login: o plugin subiu com o jogador já online (reload). Carrega em segundo plano;
-    // até lá a conta não aceita mutação, que é melhor do que operar sobre um saldo inventado.
+    if (loaded != null
+        && ledger.loaded(uuid, name, loaded.balance(), loaded.seq(), clock.getAsLong())) {
+      return;
+    }
+    // Sem pré-login válido (reload do plugin, ou leitura desatualizada): carrega em segundo plano.
+    // Até lá a conta não aceita mutação — melhor do que operar sobre um saldo inventado.
     long starting = startingBalance;
     Submitted<Long> load = db.submit(() -> storage.loadOrCreate(uuid, name, starting));
     load.future()
@@ -116,21 +132,27 @@ public final class AccountService {
             (balance, error) -> {
               if (error != null) {
                 logger.log(Level.SEVERE, "Falha ao carregar a conta de " + name, error);
-              } else if (isOnline.test(uuid)) {
-                ledger.loaded(uuid, name, balance, load.seq(), clock.getAsLong());
+              } else if (isOnline.test(uuid)
+                  && !ledger.loaded(uuid, name, balance, load.seq(), clock.getAsLong())) {
+                logger.severe("Leitura da conta de " + name + " ainda desatualizada; relogue.");
               }
             },
             mainThread);
   }
 
-  /** O jogador saiu: grava o que falta e tira a conta do cache. */
+  /**
+   * O jogador saiu: grava o que falta. A entrada continua no cache até o banco confirmar.
+   *
+   * <p>Não mexe no {@code preloaded}: num login duplicado o Paper derruba a sessão velha (quit)
+   * depois do pré-login da nova, e apagar a leitura dela aqui só forçaria uma releitura — a lápide
+   * já decide se aquela leitura serve.
+   */
   public void quit(UUID uuid) {
     ledger.takePending(uuid).ifPresent(delta -> submitFlush(List.of(delta)));
-    ledger.remove(uuid);
-    preloaded.remove(uuid);
+    ledger.markOffline(uuid, clock.getAsLong());
   }
 
-  /** Periódico: grava todos os pendentes. */
+  /** Periódico: grava todos os pendentes, inclusive os que voltaram de um flush falho. */
   public void flushAll() {
     submitFlush(ledger.takePending());
   }
@@ -146,7 +168,7 @@ public final class AccountService {
         .whenCompleteAsync(
             (balances, error) -> {
               if (error != null) {
-                logger.log(Level.WARNING, "Resync de saldos falhou; tento de novo no próximo ciclo", error);
+                logger.log(Level.WARNING, "Resync de saldos falhou; tento de novo", error);
                 return;
               }
               balances.forEach((uuid, balance) -> ledger.resynced(uuid, balance, read.seq()));
@@ -157,31 +179,41 @@ public final class AccountService {
   /** Periódico: descarta sobras de logins que não se concretizaram. */
   public void housekeeping() {
     long now = clock.getAsLong();
-    ledger.pruneOrphans(now, ORPHAN_MAX_AGE_MILLIS);
-    preloaded.values().removeIf(p -> now - p.atMillis() > ORPHAN_MAX_AGE_MILLIS);
+    ledger.prune(now, STALE_MAX_AGE_MILLIS);
+    preloaded.values().removeIf(p -> now - p.atMillis() > STALE_MAX_AGE_MILLIS);
   }
 
   /**
    * Desligamento: grava tudo e espera. Chamado no {@code onDisable}, quando a main thread já não
-   * aceita tarefas — por isso espera o futuro cru, sem callback.
+   * aceita tarefas — por isso espera os futuros crus, sem callback.
    */
   public void shutdown() {
-    List<Delta> batch = new ArrayList<>(ledger.takePending());
-    batch.addAll(detached);
-    detached.clear();
-    if (!batch.isEmpty()) {
+    try {
+      // Esvazia a fila: depois disto todo flush em voo já tem resultado.
+      db.submit(() -> null).future().get(15, TimeUnit.SECONDS);
+    } catch (Exception error) {
+      logger.log(Level.SEVERE, "O banco não esvaziou a fila no desligamento", error);
+    }
+    List<Delta> lost = new ArrayList<>();
+    for (Map.Entry<Long, Batch> entry : batches.entrySet()) {
+      Batch batch = entry.getValue();
+      if (batch.future().isCompletedExceptionally()) {
+        lost.addAll(ledger.flushFailed(entry.getKey(), batch.deltas()));
+      } else if (batch.future().isDone()) {
+        reportUnapplied(batch.future().getNow(List.of()));
+      }
+    }
+    batches.clear();
+    List<Delta> last = new ArrayList<>(ledger.takePending());
+    last.addAll(lost);
+    if (!last.isEmpty()) {
       try {
-        db.submit(
-                () -> {
-                  storage.applyDeltas(batch);
-                  return null;
-                })
-            .future()
-            .get(15, TimeUnit.SECONDS);
+        reportUnapplied(
+            db.submit(() -> storage.applyDeltas(last)).future().get(15, TimeUnit.SECONDS));
       } catch (Exception error) {
         logger.log(
             Level.SEVERE,
-            "Falha ao gravar saldos no desligamento — deltas perdidos: " + batch,
+            "Falha ao gravar saldos no desligamento — deltas perdidos: " + last,
             error);
       }
     }
@@ -190,32 +222,46 @@ public final class AccountService {
   }
 
   private void submitFlush(List<Delta> deltas) {
-    List<Delta> batch = new ArrayList<>(deltas);
-    batch.addAll(detached);
-    detached.clear();
-    if (batch.isEmpty()) {
+    if (deltas.isEmpty()) {
       return;
     }
-    Submitted<Void> write =
-        db.submit(
-            () -> {
-              storage.applyDeltas(batch);
-              return null;
-            });
+    List<Delta> batch = List.copyOf(deltas);
+    Submitted<List<Delta>> write = db.submit(() -> storage.applyDeltas(batch));
     // Seguro registrar depois de submeter: a conclusão volta pela main thread, que é esta.
     ledger.inFlight(batch, write.seq());
+    batches.put(write.seq(), new Batch(batch, write.future()));
     write
         .future()
         .whenCompleteAsync(
-            (ignored, error) -> {
-              if (error == null) {
-                ledger.flushCompleted(write.seq());
+            (unapplied, error) -> {
+              if (batches.remove(write.seq()) == null) {
+                return; // já tratado pelo desligamento
+              }
+              if (error != null) {
+                logger.log(Level.WARNING, "Falha ao gravar saldos; tento no próximo ciclo", error);
+                List<Delta> lost = ledger.flushFailed(write.seq(), batch);
+                if (!lost.isEmpty()) {
+                  logger.severe("Deltas sem conta no cache após flush falho: " + lost);
+                }
                 return;
               }
-              logger.log(Level.WARNING, "Falha ao gravar saldos; tento de novo no próximo ciclo", error);
-              detached.addAll(ledger.flushFailed(write.seq(), batch));
+              reportUnapplied(unapplied);
+              ledger.flushCompleted(write.seq(), clock.getAsLong());
             },
             mainThread);
+  }
+
+  /** O banco recusou parte de um delta por falta de saldo: dinheiro gasto que não existia. */
+  private void reportUnapplied(List<Delta> unapplied) {
+    for (Delta delta : unapplied) {
+      logger.severe(
+          "Saldo de "
+              + delta.uuid()
+              + " ficaria negativo no banco (escrita concorrente de outro servidor?); "
+              + "zerado, e "
+              + delta.amount()
+              + " bronze não puderam ser debitados.");
+    }
   }
 
   // ---------------------------------------------------------------- leitura
@@ -233,7 +279,13 @@ public final class AccountService {
    * dos pendentes). Completa na main thread.
    */
   public CompletableFuture<Optional<AccountView>> lookup(String name) {
-    return onMain(db.submit(() -> storage.findByName(name)).future(), found -> found.map(this::view));
+    return onMain(
+        db.submit(() -> storage.findByName(name)).future(), found -> found.map(this::view));
+  }
+
+  private AccountView view(StoredAccount stored) {
+    long balance = ledger.balance(stored.uuid()).orElse(stored.balance());
+    return new AccountView(stored.uuid(), stored.name(), balance);
   }
 
   /**
@@ -241,8 +293,7 @@ public final class AccountService {
    * O {@code thenApplyAsync} completa o erro na thread que falhou — a do banco —, e o callback de
    * quem chamou rodaria fora da main thread justamente no caminho de erro.
    */
-  private <T, R> CompletableFuture<R> onMain(
-      CompletableFuture<T> source, java.util.function.Function<T, R> mapper) {
+  private <T, R> CompletableFuture<R> onMain(CompletableFuture<T> source, Function<T, R> mapper) {
     CompletableFuture<R> out = new CompletableFuture<>();
     source.whenCompleteAsync(
         (value, error) -> {
@@ -258,11 +309,6 @@ public final class AccountService {
         },
         mainThread);
     return out;
-  }
-
-  private AccountView view(StoredAccount stored) {
-    long balance = ledger.balance(stored.uuid()).orElse(stored.balance());
-    return new AccountView(stored.uuid(), stored.name(), balance);
   }
 
   // ---------------------------------------------------------------- mutações no cache
@@ -286,19 +332,42 @@ public final class AccountService {
   // ---------------------------------------------------------------- mutações fora do cache
 
   /**
-   * Altera uma conta que não está no cache, validando no próprio banco. Completa na main thread; se
-   * a conta entrou no cache enquanto isso, o ledger decide se precisa somar o delta.
+   * Altera uma conta pelo banco, validando lá. Completa na main thread.
+   *
+   * <p>Conta no cache vai pelo cache — ele é a verdade dela, e uma escrita direta no banco ficaria
+   * invisível até o próximo resync. Retirada fora do cache vira reserva no ledger enquanto está em
+   * voo (ver a terceira invariante do {@link AccountLedger}).
    */
   public CompletableFuture<GuardedResult> applyOffline(UUID uuid, long delta) {
+    if (ledger.contains(uuid)) {
+      Outcome outcome = delta >= 0 ? ledger.deposit(uuid, delta) : ledger.withdraw(uuid, -delta);
+      return CompletableFuture.completedFuture(
+          new GuardedResult(outcome, ledger.balance(uuid).orElse(0)));
+    }
     long max = ledger.maxBalance();
     Submitted<GuardedResult> write = db.submit(() -> storage.applyGuarded(uuid, delta, max));
-    return onMain(
-        write.future(),
-        result -> {
-          if (result.outcome() == Outcome.OK) {
-            ledger.externalApplied(uuid, delta, write.seq(), clock.getAsLong());
-          }
-          return result;
-        });
+    if (delta < 0) {
+      ledger.holdStarted(uuid, -delta, write.seq());
+    }
+    CompletableFuture<GuardedResult> out = new CompletableFuture<>();
+    write
+        .future()
+        .whenCompleteAsync(
+            (result, error) -> {
+              boolean applied = error == null && result.outcome() == Outcome.OK;
+              long now = clock.getAsLong();
+              if (delta < 0) {
+                ledger.holdFinished(uuid, -delta, write.seq(), applied, now);
+              } else if (applied) {
+                ledger.creditApplied(uuid, delta, write.seq(), now);
+              }
+              if (error != null) {
+                out.completeExceptionally(error);
+              } else {
+                out.complete(result);
+              }
+            },
+            mainThread);
+    return out;
   }
 }

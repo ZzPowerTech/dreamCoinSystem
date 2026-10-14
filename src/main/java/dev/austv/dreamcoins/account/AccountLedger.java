@@ -10,7 +10,7 @@ import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
- * O cache de saldos dos jogadores online e a contabilidade do que ainda não chegou ao banco.
+ * O cache de saldos e a contabilidade do que ainda não chegou ao banco.
  *
  * <p><b>Só a main thread toca nesta classe.</b> Ela não tem nenhum import de Bukkit nem de JDBC: é
  * a parte que decide, isolada da casca de I/O, para que as regras de concorrência — que erram em
@@ -22,15 +22,27 @@ import java.util.UUID;
  * sequência na submissão. Como o executor é FIFO, uma leitura com sequência {@code s} enxergou o
  * efeito de toda escrita com sequência menor que {@code s}, e de nenhuma maior. É com isso que o
  * ledger responde, sem relógio e sem lock, à pergunta "este valor do banco já inclui aquela
- * escrita?":
+ * escrita?".
  *
- * <ul>
- *   <li><b>Escrita externa</b> (pagamento a jogador offline, gravado direto no banco): se terminar
- *       depois de o jogador ter sido carregado por uma leitura <i>anterior</i> a ela, o cache soma o
- *       delta; se a leitura foi posterior, o valor já estava lá e somar seria contar duas vezes.
- *   <li><b>Resync</b> (só MySQL): {@code cache = banco + flushes submetidos depois da leitura +
- *       pendente}. Os flushes anteriores à leitura já estão no número do banco.
- * </ul>
+ * <h2>Três invariantes</h2>
+ *
+ * <ol>
+ *   <li><b>Uma conta só sai do cache quando não deve nada ao banco</b> — sem pendente e sem flush
+ *       em voo. Na saída do jogador ela fica marcada como offline até o último flush confirmar; se
+ *       ele falhar, o delta volta para a <i>mesma</i> entrada e é regravado no ciclo seguinte. Se o
+ *       jogador voltar antes disso, reaproveita a entrada, que é a verdade. Sem esta regra, o delta
+ *       da sessão anterior ficaria pendurado fora de qualquer entrada e a sessão nova, lida do
+ *       banco, não o enxergaria — e o jogador gastaria duas vezes.
+ *   <li><b>Lápide:</b> quando a conta enfim sai, guarda-se a sequência da última escrita dela.
+ *       Uma leitura do banco mais antiga que a lápide (o pré-login de quem reconectou rápido) não
+ *       inclui aquela escrita e é recusada por {@link #loaded}; quem chama relê.
+ *   <li><b>Débito externo é pessimista.</b> Uma retirada gravada direto no banco para uma conta
+ *       fora do cache vira uma <i>reserva</i> enquanto está em voo: se a conta for carregada por
+ *       uma leitura anterior à retirada, o valor já entra descontado, e é devolvido se a retirada
+ *       for recusada. Somar só na conclusão deixaria o jogador gastar o mesmo dinheiro no cache
+ *       nesse meio-tempo. Crédito externo pode ser otimista: chegar atrasado nunca permite gastar o
+ *       que não existe.
+ * </ol>
  */
 public final class AccountLedger {
 
@@ -49,22 +61,37 @@ public final class AccountLedger {
 
   private record Orphan(long seq, long amount, long recordedAtMillis) {}
 
+  /** Retirada externa em voo; {@code amount} é positivo. */
+  private record Hold(long seq, long amount) {}
+
+  private record Tombstone(long seq, long recordedAtMillis) {}
+
   private static final class Entry {
     String name;
     long balance;
     long pending;
     long observedSeq;
+    long lastWriteSeq;
+    boolean online = true;
     final List<InFlight> inFlight = new ArrayList<>(2);
+    /** Reservas que esta entrada já descontou do saldo: sequência → quanto foi descontado. */
+    final Map<Long, Long> countedHolds = new HashMap<>(1);
+
+    boolean idle() {
+      return pending == 0 && inFlight.isEmpty();
+    }
   }
 
   private final Map<UUID, Entry> entries = new HashMap<>();
 
   /**
-   * Escritas externas que terminaram com a conta fora do cache. Existem para a janela entre o
-   * pré-login (que lê o banco numa thread assíncrona) e a entrada no cache na main thread: um
-   * pagamento gravado ali não seria visto por nenhum dos dois lados.
+   * Escritas externas que terminaram com a conta fora do cache. Cobrem a janela entre o pré-login
+   * (que lê o banco numa thread assíncrona) e a entrada no cache na main thread.
    */
   private final Map<UUID, List<Orphan>> orphans = new HashMap<>();
+
+  private final Map<UUID, List<Hold>> holds = new HashMap<>();
+  private final Map<UUID, Tombstone> tombstones = new HashMap<>();
 
   private long maxBalance;
 
@@ -80,19 +107,28 @@ public final class AccountLedger {
     return maxBalance;
   }
 
-  // ---------------------------------------------------------------- carga
+  // ---------------------------------------------------------------- carga e saída
 
   /**
-   * A conta foi lida do banco por uma operação de sequência {@code seq}. Reaplica as escritas
-   * externas que a leitura não viu.
+   * A conta foi lida do banco por uma operação de sequência {@code seq}.
+   *
+   * @return {@code false} se a leitura é mais antiga que a última escrita de uma sessão anterior
+   *     (lápide) — o valor está desatualizado e quem chama precisa reler
    */
-  public void loaded(UUID uuid, String name, long dbBalance, long seq, long nowMillis) {
+  public boolean loaded(UUID uuid, String name, long dbBalance, long seq, long nowMillis) {
     Entry existing = entries.get(uuid);
     if (existing != null) {
       existing.name = name;
+      existing.online = true;
       resynced(uuid, dbBalance, seq);
-      return;
+      return true;
     }
+    Tombstone tombstone = tombstones.get(uuid);
+    if (tombstone != null && tombstone.seq() > seq) {
+      return false;
+    }
+    tombstones.remove(uuid);
+
     Entry entry = new Entry();
     entry.name = name;
     entry.balance = dbBalance;
@@ -105,11 +141,44 @@ public final class AccountLedger {
         }
       }
     }
+    entry.balance = deductHolds(uuid, entry, entry.balance, seq);
     entries.put(uuid, entry);
+    return true;
   }
 
-  public void remove(UUID uuid) {
+  /**
+   * O jogador voltou enquanto a entrada da sessão anterior ainda estava no cache (devendo flush):
+   * ela é a verdade, e nenhuma leitura do banco a substitui.
+   *
+   * @return {@code false} se não havia entrada
+   */
+  public boolean reattach(UUID uuid, String name) {
+    Entry entry = entries.get(uuid);
+    if (entry == null) {
+      return false;
+    }
+    entry.name = name;
+    entry.online = true;
+    return true;
+  }
+
+  /** O jogador saiu. A entrada só deixa o cache quando não dever nada ao banco. */
+  public void markOffline(UUID uuid, long nowMillis) {
+    Entry entry = entries.get(uuid);
+    if (entry != null) {
+      entry.online = false;
+      evictIfIdle(uuid, entry, nowMillis);
+    }
+  }
+
+  private void evictIfIdle(UUID uuid, Entry entry, long nowMillis) {
+    if (entry.online || !entry.idle()) {
+      return;
+    }
     entries.remove(uuid);
+    if (entry.lastWriteSeq > 0) {
+      tombstones.put(uuid, new Tombstone(entry.lastWriteSeq, nowMillis));
+    }
   }
 
   public boolean contains(UUID uuid) {
@@ -236,55 +305,119 @@ public final class AccountLedger {
       Entry entry = entries.get(delta.uuid());
       if (entry != null) {
         entry.inFlight.add(new InFlight(seq, delta.amount()));
+        entry.lastWriteSeq = Math.max(entry.lastWriteSeq, seq);
       }
     }
   }
 
-  public void flushCompleted(long seq) {
-    for (Entry entry : entries.values()) {
-      entry.inFlight.removeIf(f -> f.seq() == seq);
+  /** A gravação {@code seq} foi confirmada. Contas offline que ficaram quites saem do cache. */
+  public void flushCompleted(long seq, long nowMillis) {
+    List<UUID> idleOffline = new ArrayList<>();
+    for (Map.Entry<UUID, Entry> e : entries.entrySet()) {
+      Entry entry = e.getValue();
+      if (entry.inFlight.removeIf(f -> f.seq() == seq) && !entry.online && entry.idle()) {
+        idleOffline.add(e.getKey());
+      }
+    }
+    for (UUID uuid : idleOffline) {
+      evictIfIdle(uuid, entries.get(uuid), nowMillis);
     }
   }
 
   /**
-   * A gravação {@code seq} falhou (a transação inteira, nada foi aplicado). Os deltas de contas
-   * ainda no cache voltam para o pendente.
+   * A gravação {@code seq} falhou (a transação inteira, nada foi aplicado). Os deltas voltam ao
+   * pendente da entrada, que pela primeira invariante ainda está no cache.
    *
-   * @param batch o que foi submetido em {@code seq}
-   * @return os deltas de contas que já saíram do cache — quem chama precisa retentá-los, senão o
-   *     dinheiro some
+   * @return deltas cuja entrada não existe mais — não deveria acontecer; quem chama registra para
+   *     recuperação manual
    */
   public List<Delta> flushFailed(long seq, List<Delta> batch) {
-    List<Delta> detached = new ArrayList<>();
+    List<Delta> orphaned = new ArrayList<>();
     for (Delta delta : batch) {
       Entry entry = entries.get(delta.uuid());
-      if (entry == null) {
-        detached.add(delta);
+      if (entry == null || !entry.inFlight.removeIf(f -> f.seq() == seq)) {
+        orphaned.add(delta);
         continue;
       }
-      entry.inFlight.removeIf(f -> f.seq() == seq);
       entry.pending += delta.amount();
     }
-    return detached;
+    return orphaned;
   }
 
   // ---------------------------------------------------------------- escritas externas
 
   /**
-   * Uma escrita feita direto no banco (sequência {@code seq}) terminou. Se o cache tem a conta e a
-   * leitura dela foi anterior à escrita, o delta é somado; senão fica guardado para o caso de a
-   * conta estar entrando.
+   * Um <b>crédito</b> gravado direto no banco (sequência {@code seq}) terminou. Se o cache tem a
+   * conta e a leitura dela foi anterior ao crédito, ele é somado; sem a conta, fica guardado para o
+   * caso de ela estar entrando.
    */
-  public void externalApplied(UUID uuid, long delta, long seq, long nowMillis) {
+  public void creditApplied(UUID uuid, long amount, long seq, long nowMillis) {
+    requireNonNegative(amount);
     Entry entry = entries.get(uuid);
     if (entry == null) {
       orphans.computeIfAbsent(uuid, k -> new ArrayList<>(1))
-          .add(new Orphan(seq, delta, nowMillis));
+          .add(new Orphan(seq, amount, nowMillis));
       return;
     }
+    entry.lastWriteSeq = Math.max(entry.lastWriteSeq, seq);
     if (entry.observedSeq < seq) {
-      entry.balance += delta;
+      entry.balance += amount;
     }
+  }
+
+  /** Uma <b>retirada</b> direta no banco foi submetida em {@code seq} para conta fora do cache. */
+  public void holdStarted(UUID uuid, long amount, long seq) {
+    requireNonNegative(amount);
+    holds.computeIfAbsent(uuid, k -> new ArrayList<>(1)).add(new Hold(seq, amount));
+  }
+
+  /**
+   * A retirada {@code seq} terminou. Recusada ou com erro: se uma entrada já a tinha descontado, o
+   * que foi descontado volta. Aplicada sem entrada: vira órfã negativa para uma leitura anterior
+   * que ainda vá entrar.
+   */
+  public void holdFinished(UUID uuid, long amount, long seq, boolean applied, long nowMillis) {
+    List<Hold> list = holds.get(uuid);
+    if (list != null) {
+      list.removeIf(h -> h.seq() == seq);
+      if (list.isEmpty()) {
+        holds.remove(uuid);
+      }
+    }
+    Entry entry = entries.get(uuid);
+    if (entry == null) {
+      if (applied) {
+        orphans.computeIfAbsent(uuid, k -> new ArrayList<>(1))
+            .add(new Orphan(seq, -amount, nowMillis));
+      }
+      return;
+    }
+    if (applied) {
+      entry.lastWriteSeq = Math.max(entry.lastWriteSeq, seq);
+    }
+    Long deducted = entry.countedHolds.remove(seq);
+    if (deducted != null && !applied) {
+      entry.balance += deducted;
+    }
+  }
+
+  /**
+   * Desconta de {@code base} as reservas que uma leitura de sequência {@code seq} não viu, e anota
+   * quanto saiu de cada uma. O desconto para no zero: uma reserva maior que o saldo (que o banco
+   * vai recusar) não pode deixar o cache negativo — e, se for recusada, devolve só o que de fato
+   * descontou. Devolver o valor cheio criaria dinheiro.
+   */
+  private long deductHolds(UUID uuid, Entry entry, long base, long seq) {
+    entry.countedHolds.clear();
+    long balance = Math.max(0, base);
+    for (Hold hold : holds.getOrDefault(uuid, List.of())) {
+      if (hold.seq() > seq) {
+        long deducted = Math.min(hold.amount(), balance);
+        balance -= deducted;
+        entry.countedHolds.put(hold.seq(), deducted);
+      }
+    }
+    return balance;
   }
 
   /** O banco foi relido na operação {@code seq}. */
@@ -299,12 +432,12 @@ public final class AccountLedger {
         notYetInDb += flight.amount();
       }
     }
-    entry.balance = dbBalance + notYetInDb;
+    entry.balance = deductHolds(uuid, entry, dbBalance + notYetInDb, seq);
     entry.observedSeq = seq;
   }
 
-  /** Descarta órfãos mais velhos que {@code maxAgeMillis}: a conta não entrou mais. */
-  public void pruneOrphans(long nowMillis, long maxAgeMillis) {
+  /** Descarta órfãos e lápides mais velhos que {@code maxAgeMillis}. */
+  public void prune(long nowMillis, long maxAgeMillis) {
     Iterator<Map.Entry<UUID, List<Orphan>>> it = orphans.entrySet().iterator();
     while (it.hasNext()) {
       List<Orphan> list = it.next().getValue();
@@ -313,9 +446,10 @@ public final class AccountLedger {
         it.remove();
       }
     }
+    tombstones.values().removeIf(t -> nowMillis - t.recordedAtMillis() > maxAgeMillis);
   }
 
-  /** Contas no cache, para o resync e o flush final. */
+  /** Contas no cache, para o resync. */
   public List<UUID> accounts() {
     return List.copyOf(entries.keySet());
   }

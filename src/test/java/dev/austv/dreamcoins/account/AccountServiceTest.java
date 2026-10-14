@@ -432,6 +432,23 @@ class AccountServiceTest {
     assertEquals(OptionalLong.of(100), service.balance(bob));
   }
 
+  /** Re-revisão do PR #1 (C1): dois flushes da mesma conta em voo deixavam o piso criar dinheiro. */
+  @Test
+  void failedCreditFollowedByADebitFlushCannotCreateMoney() throws Exception {
+    login(alice, "alice"); // 100
+    service.deposit(alice, 50);
+    storage.failNextFlush = true;
+    service.flushAll(); // +50 vai falhar
+    service.withdraw(alice, 120); // cache 30
+    online.remove(alice);
+    service.quit(alice); // no mesmo tick, antes do callback de falha
+    settle();
+    service.flushAll(); // regrava o que falta: +50 - 120
+    settle();
+    assertEquals(30, stored(alice));
+    assertFalse(service.isLoaded(alice), "quitou com o banco: sai do cache");
+  }
+
   @Test
   void offlineChangeToACachedAccountGoesThroughTheCache() throws Exception {
     login(bob, "bob");

@@ -276,22 +276,46 @@ public final class AccountLedger {
 
   // ---------------------------------------------------------------- flush
 
-  /** Retira todos os deltas pendentes. Quem chama deve registrá-los com {@link #inFlight}. */
+  /**
+   * Retira os deltas pendentes das contas <b>sem flush em voo</b>. Quem chama deve registrá-los com
+   * {@link #inFlight}.
+   *
+   * <p>No máximo um flush em voo por conta, e não é otimização: com dois, um crédito que falhasse
+   * deixaria o débito seguinte bater num banco sem aquele crédito — o piso em zero cortaria o
+   * débito, o crédito voltaria e seria regravado, e o jogador ficaria com dinheiro que gastou.
+   * Esperando, o crédito falho volta ao pendente <i>antes</i> e os dois seguem somados.
+   */
   public List<Delta> takePending() {
+    return takePending(false);
+  }
+
+  /**
+   * Retira <b>todo</b> pendente, mesmo de contas com flush em voo. Só para o desligamento, depois de
+   * a fila do banco esvaziar e os resultados dos voos terem sido aplicados.
+   */
+  public List<Delta> takeAllPending() {
+    return takePending(true);
+  }
+
+  private List<Delta> takePending(boolean includeInFlight) {
     List<Delta> out = new ArrayList<>();
     for (Map.Entry<UUID, Entry> e : entries.entrySet()) {
-      if (e.getValue().pending != 0) {
-        out.add(new Delta(e.getKey(), e.getValue().pending));
-        e.getValue().pending = 0;
+      Entry entry = e.getValue();
+      if (entry.pending != 0 && (includeInFlight || entry.inFlight.isEmpty())) {
+        out.add(new Delta(e.getKey(), entry.pending));
+        entry.pending = 0;
       }
     }
     return out;
   }
 
-  /** Retira o pendente de uma conta só (saída do jogador). */
+  /**
+   * Retira o pendente de uma conta só (saída do jogador). Vazio se ela já tem flush em voo: o
+   * pendente sai no ciclo seguinte, e até lá a entrada não deixa o cache.
+   */
   public Optional<Delta> takePending(UUID uuid) {
     Entry entry = entries.get(uuid);
-    if (entry == null || entry.pending == 0) {
+    if (entry == null || entry.pending == 0 || !entry.inFlight.isEmpty()) {
       return Optional.empty();
     }
     Delta delta = new Delta(uuid, entry.pending);
@@ -447,6 +471,22 @@ public final class AccountLedger {
       }
     }
     tombstones.values().removeIf(t -> nowMillis - t.recordedAtMillis() > maxAgeMillis);
+  }
+
+  /**
+   * Tira do cache as contas offline que ficaram quites sem passar por um flush — o pendente voltou a
+   * zero por uma mutação depois do quit, então nenhum {@link #flushCompleted} vai despejá-las.
+   */
+  public void evictIdleOffline(long nowMillis) {
+    List<UUID> idle = new ArrayList<>();
+    for (Map.Entry<UUID, Entry> e : entries.entrySet()) {
+      if (!e.getValue().online && e.getValue().idle()) {
+        idle.add(e.getKey());
+      }
+    }
+    for (UUID uuid : idle) {
+      evictIfIdle(uuid, entries.get(uuid), nowMillis);
+    }
   }
 
   /** Contas no cache, para o resync. */

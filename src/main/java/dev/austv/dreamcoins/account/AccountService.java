@@ -152,9 +152,13 @@ public final class AccountService {
     ledger.markOffline(uuid, clock.getAsLong());
   }
 
-  /** Periódico: grava todos os pendentes, inclusive os que voltaram de um flush falho. */
+  /**
+   * Periódico: grava os pendentes (inclusive os que voltaram de um flush falho) das contas sem flush
+   * em voo, e despeja as contas offline que ficaram quites sem precisar de flush.
+   */
   public void flushAll() {
     submitFlush(ledger.takePending());
+    ledger.evictIdleOffline(clock.getAsLong());
   }
 
   /** Periódico (só MySQL): traz para o cache o que outro servidor gravou. */
@@ -194,6 +198,7 @@ public final class AccountService {
     } catch (Exception error) {
       logger.log(Level.SEVERE, "O banco não esvaziou a fila no desligamento", error);
     }
+    long now = clock.getAsLong();
     List<Delta> lost = new ArrayList<>();
     for (Map.Entry<Long, Batch> entry : batches.entrySet()) {
       Batch batch = entry.getValue();
@@ -201,10 +206,16 @@ public final class AccountService {
         lost.addAll(ledger.flushFailed(entry.getKey(), batch.deltas()));
       } else if (batch.future().isDone()) {
         reportUnapplied(batch.future().getNow(List.of()));
+        ledger.flushCompleted(entry.getKey(), now);
+      } else {
+        logger.severe(
+            "Flush ainda sem resposta no desligamento — se falhar, estes deltas se perdem: "
+                + batch.deltas());
       }
     }
     batches.clear();
-    List<Delta> last = new ArrayList<>(ledger.takePending());
+    // A fila já esvaziou e os voos foram resolvidos acima: aqui pode pegar tudo de uma vez.
+    List<Delta> last = new ArrayList<>(ledger.takeAllPending());
     last.addAll(lost);
     if (!last.isEmpty()) {
       try {
@@ -251,16 +262,28 @@ public final class AccountService {
             mainThread);
   }
 
-  /** O banco recusou parte de um delta por falta de saldo: dinheiro gasto que não existia. */
+  /**
+   * O banco não aplicou parte de um delta. Débito: o saldo no banco era menor do que o cache via —
+   * em servidor único isso não deveria acontecer, e com MySQL em rede é a janela de troca de
+   * servidor. Qualquer outro caso: a conta não existe mais no banco.
+   */
   private void reportUnapplied(List<Delta> unapplied) {
     for (Delta delta : unapplied) {
-      logger.severe(
-          "Saldo de "
-              + delta.uuid()
-              + " ficaria negativo no banco (escrita concorrente de outro servidor?); "
-              + "zerado, e "
-              + delta.amount()
-              + " bronze não puderam ser debitados.");
+      if (delta.amount() < 0) {
+        logger.severe(
+            "Saldo de "
+                + delta.uuid()
+                + " no banco era menor que o do cache; zerado, e "
+                + -delta.amount()
+                + " bronze gastos não puderam ser debitados.");
+      } else {
+        logger.severe(
+            "Conta "
+                + delta.uuid()
+                + " não existe mais no banco; "
+                + delta.amount()
+                + " bronze não puderam ser creditados.");
+      }
     }
   }
 

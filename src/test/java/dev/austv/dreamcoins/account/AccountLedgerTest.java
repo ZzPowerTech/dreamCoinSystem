@@ -103,7 +103,33 @@ class AccountLedgerTest {
     assertEquals(List.of(new Delta(alice, 6)), ledger.takePending());
   }
 
+  @Test
+  void pendingWaitsWhileTheAccountHasAFlushInFlight() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.deposit(alice, 50);
+    ledger.inFlight(ledger.takePending(), 3);
+    ledger.withdraw(alice, 120);
+    assertEquals(List.of(), ledger.takePending());
+    assertTrue(ledger.takePending(alice).isEmpty());
+    ledger.flushFailed(3, List.of(new Delta(alice, 50)));
+    // o crédito falho volta ANTES de o débito sair: os dois seguem juntos
+    assertEquals(List.of(new Delta(alice, -70)), ledger.takePending());
+  }
+
   // ---- saída do cache: só quando não deve nada ao banco ----
+
+  @Test
+  void offlineEntryWhosePendingNetsToZeroIsEvicted() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.deposit(alice, 5);
+    Delta quit = ledger.takePending(alice).orElseThrow();
+    ledger.inFlight(List.of(quit), 3);
+    ledger.markOffline(alice, 0);
+    ledger.flushFailed(3, List.of(quit)); // +5 volta ao pendente
+    ledger.withdraw(alice, 5); // pendente zera sem flush
+    ledger.evictIdleOffline(0);
+    assertFalse(ledger.contains(alice));
+  }
 
   @Test
   void accountWithoutWritesLeavesImmediately() {

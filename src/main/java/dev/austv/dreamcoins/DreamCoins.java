@@ -1,0 +1,121 @@
+package dev.austv.dreamcoins;
+
+import dev.austv.dreamcoins.account.AccountListener;
+import dev.austv.dreamcoins.account.AccountService;
+import dev.austv.dreamcoins.command.BalanceCommand;
+import dev.austv.dreamcoins.config.Messages;
+import dev.austv.dreamcoins.config.PluginConfig;
+import dev.austv.dreamcoins.storage.MySqlStorage;
+import dev.austv.dreamcoins.storage.SequencedExecutor;
+import dev.austv.dreamcoins.storage.SqliteStorage;
+import dev.austv.dreamcoins.storage.Storage;
+import dev.austv.dreamcoins.storage.StorageType;
+import java.sql.SQLException;
+import java.util.Objects;
+import java.util.concurrent.Executor;
+import java.util.logging.Level;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+import org.bukkit.plugin.java.JavaPlugin;
+
+/** Ponto de entrada do plugin. */
+public final class DreamCoins extends JavaPlugin {
+
+  private PluginConfig config;
+  private Messages messages;
+  private AccountService accounts;
+
+  @Override
+  public void onEnable() {
+    saveDefaultConfig();
+    getConfig().options().copyDefaults(true);
+    saveConfig();
+    config = PluginConfig.from(getConfig(), message -> getLogger().warning(message));
+    messages = new Messages(this);
+
+    Storage storage = createStorage(config);
+    try {
+      storage.open();
+    } catch (SQLException | RuntimeException error) {
+      getLogger().log(Level.SEVERE, "Não foi possível abrir o banco de dados; desligando.", error);
+      storage.close();
+      getServer().getPluginManager().disablePlugin(this);
+      return;
+    }
+
+    accounts =
+        new AccountService(
+            storage,
+            new SequencedExecutor("dreamCoins-db"),
+            mainThread(),
+            uuid -> Bukkit.getPlayer(uuid) != null,
+            System::currentTimeMillis,
+            getLogger(),
+            config.startingBalance(),
+            config.maxBalance());
+
+    getServer().getPluginManager().registerEvents(
+        new AccountListener(accounts, messages, getLogger()), this);
+    // Reload com jogadores online: eles não passaram pelo pré-login desta instância.
+    for (Player player : Bukkit.getOnlinePlayers()) {
+      accounts.join(player.getUniqueId(), player.getName());
+    }
+
+    BalanceCommand balance = new BalanceCommand(accounts, messages, getLogger());
+    Objects.requireNonNull(getCommand("saldo")).setExecutor(balance);
+    Objects.requireNonNull(getCommand("saldo")).setTabCompleter(balance);
+
+    scheduleTasks();
+    getLogger().info("Economia pronta (" + config.storageType().name().toLowerCase(java.util.Locale.ROOT) + ").");
+  }
+
+  @Override
+  public void onDisable() {
+    if (accounts != null) {
+      accounts.shutdown();
+    }
+  }
+
+  public AccountService accounts() {
+    return accounts;
+  }
+
+  public Messages messages() {
+    return messages;
+  }
+
+  private Storage createStorage(PluginConfig config) {
+    if (config.storageType() == StorageType.MYSQL) {
+      return new MySqlStorage(config.mysql());
+    }
+    return new SqliteStorage(getDataFolder().toPath().resolve(config.sqliteFile()));
+  }
+
+  private void scheduleTasks() {
+    long flushTicks = config.flushIntervalSeconds() * 20L;
+    Bukkit.getScheduler().runTaskTimer(this, accounts::flushAll, flushTicks, flushTicks);
+    Bukkit.getScheduler().runTaskTimer(this, accounts::housekeeping, 1200L, 1200L);
+    // Com SQLite só este servidor escreve: o cache é a verdade e o resync seria leitura inútil.
+    if (config.storageType() == StorageType.MYSQL) {
+      long resyncTicks = config.resyncIntervalSeconds() * 20L;
+      Bukkit.getScheduler().runTaskTimer(this, accounts::resyncOnline, resyncTicks, resyncTicks);
+    }
+  }
+
+  /**
+   * A main thread como {@link Executor}. Com o plugin desligado a tarefa é descartada: no {@code
+   * onDisable} o scheduler já não aceita nada, e o desligamento espera a gravação diretamente.
+   */
+  private Executor mainThread() {
+    return task -> {
+      if (!isEnabled()) {
+        return;
+      }
+      try {
+        Bukkit.getScheduler().runTask(this, task);
+      } catch (RuntimeException rejected) {
+        getLogger().log(Level.FINE, "Tarefa descartada no desligamento", rejected);
+      }
+    };
+  }
+}

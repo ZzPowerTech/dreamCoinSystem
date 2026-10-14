@@ -233,9 +233,31 @@ public final class AccountService {
    * dos pendentes). Completa na main thread.
    */
   public CompletableFuture<Optional<AccountView>> lookup(String name) {
-    return db.submit(() -> storage.findByName(name))
-        .future()
-        .thenApplyAsync(found -> found.map(this::view), mainThread);
+    return onMain(db.submit(() -> storage.findByName(name)).future(), found -> found.map(this::view));
+  }
+
+  /**
+   * Como {@code thenApplyAsync(fn, mainThread)}, mas a <b>falha</b> também volta pela main thread.
+   * O {@code thenApplyAsync} completa o erro na thread que falhou — a do banco —, e o callback de
+   * quem chamou rodaria fora da main thread justamente no caminho de erro.
+   */
+  private <T, R> CompletableFuture<R> onMain(
+      CompletableFuture<T> source, java.util.function.Function<T, R> mapper) {
+    CompletableFuture<R> out = new CompletableFuture<>();
+    source.whenCompleteAsync(
+        (value, error) -> {
+          if (error != null) {
+            out.completeExceptionally(error);
+            return;
+          }
+          try {
+            out.complete(mapper.apply(value));
+          } catch (RuntimeException mapperError) {
+            out.completeExceptionally(mapperError);
+          }
+        },
+        mainThread);
+    return out;
   }
 
   private AccountView view(StoredAccount stored) {
@@ -270,15 +292,13 @@ public final class AccountService {
   public CompletableFuture<GuardedResult> applyOffline(UUID uuid, long delta) {
     long max = ledger.maxBalance();
     Submitted<GuardedResult> write = db.submit(() -> storage.applyGuarded(uuid, delta, max));
-    return write
-        .future()
-        .thenApplyAsync(
-            result -> {
-              if (result.outcome() == Outcome.OK) {
-                ledger.externalApplied(uuid, delta, write.seq(), clock.getAsLong());
-              }
-              return result;
-            },
-            mainThread);
+    return onMain(
+        write.future(),
+        result -> {
+          if (result.outcome() == Outcome.OK) {
+            ledger.externalApplied(uuid, delta, write.seq(), clock.getAsLong());
+          }
+          return result;
+        });
   }
 }

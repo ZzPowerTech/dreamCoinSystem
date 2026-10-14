@@ -1,0 +1,21 @@
+name: dreamCoinSystem
+version: '${project.version}'
+main: dev.austv.dreamcoins.DreamCoins
+api-version: '1.21'
+description: Economia de três moedas (ouro, prata, bronze) do servidor Dream.
+authors: [ZzPowerTech]
+website: https://github.com/ZzPowerTech/dreamCoinSystem
+
+# Nunca registrar /pay, /balance nem /eco: colidem com o Essentials.
+commands:
+  saldo:
+    description: Mostra o seu saldo ou o de outro jogador.
+    usage: /saldo [jogador]
+
+permissions:
+  dreamcoins.balance:
+    description: Ver o próprio saldo.
+    default: true
+  dreamcoins.balance.others:
+    description: Ver o saldo de outros jogadores.
+    default: op

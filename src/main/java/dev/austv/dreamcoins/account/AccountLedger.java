@@ -185,9 +185,13 @@ public final class AccountLedger {
     return entries.containsKey(uuid);
   }
 
+  /**
+   * Saldo para exibição e para o Vault, nunca negativo. Por dentro ele pode estar negativo enquanto
+   * uma retirada externa aguarda resposta (ver {@link #deductHolds}).
+   */
   public OptionalLong balance(UUID uuid) {
     Entry entry = entries.get(uuid);
-    return entry == null ? OptionalLong.empty() : OptionalLong.of(entry.balance);
+    return entry == null ? OptionalLong.empty() : OptionalLong.of(Math.max(0, entry.balance));
   }
 
   public Optional<String> name(UUID uuid) {
@@ -426,19 +430,21 @@ public final class AccountLedger {
   }
 
   /**
-   * Desconta de {@code base} as reservas que uma leitura de sequência {@code seq} não viu, e anota
-   * quanto saiu de cada uma. O desconto para no zero: uma reserva maior que o saldo (que o banco
-   * vai recusar) não pode deixar o cache negativo — e, se for recusada, devolve só o que de fato
-   * descontou. Devolver o valor cheio criaria dinheiro.
+   * Desconta de {@code base} as reservas que uma leitura de sequência {@code seq} não viu.
+   *
+   * <p>O desconto é <b>cheio e sem piso</b>: o saldo interno pode ficar negativo enquanto uma
+   * reserva maior que o valor lido aguarda resposta — por exemplo, porque um crédito anterior a ela
+   * ainda não chegou ao cache. Cortar no zero parecia mais seguro e criava dinheiro: se a retirada
+   * fosse aplicada, a parte cortada nunca era descontada (achado do fuzz da revisão). Negativo por
+   * dentro já recusa toda retirada, e {@link #balance} corta no zero só para exibição.
    */
   private long deductHolds(UUID uuid, Entry entry, long base, long seq) {
     entry.countedHolds.clear();
-    long balance = Math.max(0, base);
+    long balance = base;
     for (Hold hold : holds.getOrDefault(uuid, List.of())) {
       if (hold.seq() > seq) {
-        long deducted = Math.min(hold.amount(), balance);
-        balance -= deducted;
-        entry.countedHolds.put(hold.seq(), deducted);
+        balance -= hold.amount();
+        entry.countedHolds.put(hold.seq(), hold.amount());
       }
     }
     return balance;

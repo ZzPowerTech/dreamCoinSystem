@@ -245,6 +245,18 @@ class AccountLedgerTest {
     assertEquals(100, balance(bob));
   }
 
+  /** Seed 832 do fuzz da revisão: crédito e retirada em voo, a leitura não viu nenhum dos dois. */
+  @Test
+  void withdrawalLargerThanTheReadIsDeductedInFullWhenACreditArrivesLater() {
+    ledger.holdStarted(bob, 77, 6); // banco: 61 → +43 (seq 5) → -77 (seq 6) = 27
+    ledger.loaded(bob, "bob", 61, 4, 0);
+    assertEquals(0, balance(bob), "exibição nunca negativa");
+    assertEquals(Outcome.INSUFFICIENT, ledger.withdraw(bob, 1));
+    ledger.creditApplied(bob, 43, 5, 0);
+    ledger.holdFinished(bob, 77, 6, true, 0);
+    assertEquals(27, balance(bob));
+  }
+
   @Test
   void withdrawalTheLoadAlreadySawIsNotDeductedTwice() {
     ledger.holdStarted(bob, 100, 4);

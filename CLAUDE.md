@@ -71,7 +71,7 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 
 ## Estado atual
 
-**PR 1 (`feature/core-storage`) — atual:** núcleo puro de moedas, `AccountLedger` +
+**PR 1 (`feature/core-storage`) — mergeado ([#1](https://github.com/ZzPowerTech/dreamCoinSystem/pull/1)):** núcleo puro de moedas, `AccountLedger` +
 `AccountService`, SQLite/MySQL por delta, conta criada no pré-login, `/saldo`, CI. Próximo: PR 2
 (`feature/vault-economy`).
 
@@ -100,7 +100,11 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
   enquanto a reserva aguarda (negativo já recusa retirada); só `AccountLedger#balance` corta no
   zero, para exibição. Cortar o desconto no zero criava dinheiro: com um crédito anterior ainda a
   caminho, a parte cortada nunca era descontada quando a retirada confirmava (seed 832 do fuzz da
-  re-revisão). Crédito offline continua otimista.
+  re-revisão). Crédito offline continua otimista. Consequências travadas por teste: **`set` devolve
+  `BUSY`** enquanto houver reserva descontada (o delta sobre o saldo descontado virava dinheiro se a
+  retirada fosse recusada), o **teto** de depósito/transferência é checado contra o saldo no pior
+  caso (reservas recusadas), e `applyOffline` recusa `|delta| > max` antes de virar reserva.
+  **O `/moedas set` do PR 3 precisa tratar `BUSY`** com "tente de novo em instantes".
 - **No máximo um flush em voo por conta** (re-revisão do PR #1). Com dois, um crédito que falhasse
   deixava o débito seguinte bater num banco sem o crédito: o piso cortava o débito, o crédito era
   regravado e o jogador ficava com dinheiro que gastou. O pendente de uma conta com flush em voo

@@ -44,7 +44,15 @@ similar) no servidor local.
    `7 prata e 50 bronze`.
 4. **Venda.** Venda um item de preço `0.015`: entra 1 bronze (depósito arredonda para baixo).
 5. **Saldo insuficiente.** Tente comprar algo acima do saldo: a loja recusa e o saldo não muda.
-6. **`/eco` do Essentials** (se ativo): `/eco give <jogador> 1` usa o Vault → +1 prata.
-7. **⚠ Jogador offline.** Com o jogador desconectado, `/eco give <nome> 2`: o banco recebe +200
+6. **⚠ Essentials.** Os comandos de economia do EssentialsX (`/eco`, `/pay`, `/balance`) usam a
+   economia **interna** dele, não o Vault. Confirme que estão em `disabled-commands` no
+   `config.yml` do Essentials; senão haverá duas moedas paralelas.
+7. **⚠ Jogador offline.** Com o jogador desconectado, pague-o por um plugin que use o Vault
+   (ex.: venda no leilão, comando do plugin de loja): o banco recebe +200
    bronze em até alguns ms, sem travar o servidor; ao entrar, `/saldo` mostra o valor.
 8. **⚠ Formatação.** Mensagens de lojas que usam `Economy#format` mostram `12 prata e 50 bronze`.
+9. **⚠ Cada loja usa o dreamCoinSystem.** Para cada plugin de loja/leilão instalado, faça uma
+   compra e confira o `/saldo`. Loja que habilitou antes de nós pode ter guardado outro provedor.
+10. **⚠ Banco travado.** Com MySQL, derrube o banco e faça uma venda para um jogador offline: a
+    loja recebe falha em ~5 s, o console avisa "abandonada sem efeito", e vendas seguintes falham
+    **na hora** (disjuntor) sem travar o servidor. Religue o banco: tudo volta a funcionar.

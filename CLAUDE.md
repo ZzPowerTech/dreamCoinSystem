@@ -88,8 +88,23 @@ pré-login, `/saldo`, CI.
   `applyOffline` — reserva, lápide e órfãos valem igual — e o que se espera é o futuro **cru** da
   thread do banco: esperar o que completa na main thread travaria. A thread do banco nunca espera a
   main, então não há impasse. Timeout em `vault.offline-timeout-millis` (5 s).
-- **Timeout do banco é resultado incerto**, e o log diz isso: a escrita pode ser aplicada depois da
-  resposta de falha. É o único caso em que o Vault pode mentir, e só com o banco travado.
+- **Timeout do banco é falha verdadeira** (revisão do PR #2, I3). Toda operação bloqueante só roda
+  se ganhar uma *claim* (`AtomicBoolean`); no timeout quem espera disputa a claim e, ganhando, a
+  tarefa vira no-op — nada mudou, e a reserva de uma retirada é devolvida. A primeira versão
+  respondia falha com a escrita ainda na fila: dois saques "falhos" com o banco preso levavam o
+  dinheiro do mesmo jeito, e um depósito "falho" é duplicação com plugins que repagam na falha. Só
+  sobra incerteza se a tarefa **já começou** — aí espera-se o resultado real (até 30 s; o MySQL
+  tem `socketTimeout` de 20 s) e o log avisa se nem isso bastar.
+- **Disjuntor do banco**: depois de um timeout, operação bloqueante nova falha **na hora** até a
+  fila do banco andar até uma tarefa-sonda. Sem ele, um leilão pagando vinte vendedores offline num
+  tick esperaria vinte timeouts e o watchdog do Paper (60 s) derrubaria o servidor.
+- **Serviço fechado depois do shutdown** (I1): toda mutação devolve `UNAVAILABLE`, e o
+  `DreamEconomy` recusa com o plugin desligado. Lojas guardam a referência do provedor no
+  `onEnable` delas; depois de um disable/reload só deste plugin, a instância antiga aceitava saque
+  em conta do cache com SUCCESS sem nada chegar ao banco.
+- **Ruído de ponto flutuante não vira bronze** (I2): o valor do Vault é arredondado em 8 casas
+  antes do floor/ceil — lojas calculam preço × quantidade em `double`, e `0.1 + 0.2` cobrava 31
+  bronze. A fração real abaixo de 1 bronze continua no floor/ceil (0.005 segue valendo zero).
 - **Chamada assíncrona de outro plugin vai para a main thread** (`callSyncMethod`) e é esperada.
   No timeout a tarefa é **cancelada**; se ela já começou, espera-se o resultado real. Responder
   falha com a tarefa ainda na fila seria o mesmo resultado incerto, sem necessidade.
@@ -102,6 +117,20 @@ pré-login, `/saldo`, CI.
   não roubar um nome reaproveitado.
 - **Provedor concorrente é aviso SEVERE no primeiro tick**, depois de todo plugin subir: o
   Essentials pode registrar a economia dele depois de nós.
+- **Limites conhecidos (documentados, não corrigidos):**
+  - Loja que habilita **antes** de nós e guarda o provedor fica com o do Essentials (ou nenhum): a
+    ordem entre plugins que só dependem do Vault é arbitrária. Conferir cada loja no roteiro
+    manual; se precisar, `loadbefore:` com elas.
+  - Os comandos de economia do **EssentialsX** (`/eco`, `/pay`, `/balance`, `/baltop`) mexem na
+    economia **interna** dele, não no Vault: com os dois ativos haveria duas moedas paralelas.
+    Desligar esses comandos no Essentials (`disabled-commands`) ou a economia dele.
+  - Variantes do Vault por **nome** (deprecated): online exato, senão o `last_seen` mais recente.
+    Contas criadas por plugin (`last_seen` 0) com o mesmo nome empatam.
+  - `createPlayerAccount(OfflinePlayer)` cria conta com o `starting-balance` para **qualquer**
+    UUID, inclusive NPC/cidade de outro plugin — mesmo comportamento do Essentials.
+  - `getBalance` assíncrono (TAB, scoreboards) espera um tick pelo `callSyncMethod`. Um espelho
+    somente-leitura dos saldos do cache para leitura fora da main thread entra no PR 5, junto com
+    as placeholders, que têm o mesmo problema.
 
 ### Decisões de design do PR 1
 

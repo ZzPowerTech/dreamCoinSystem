@@ -25,6 +25,14 @@ public interface Storage extends AutoCloseable {
   long loadOrCreate(UUID uuid, String name, long startingBalance) throws SQLException;
 
   /**
+   * Cria a conta com {@code startingBalance} se ela não existir, sem tocar em nada se existir. Não
+   * é um login: {@code last_seen} fica em zero, para a conta não roubar um nome reaproveitado.
+   *
+   * @return {@code true} se a conta foi criada agora
+   */
+  boolean ensureAccount(UUID uuid, String name, long startingBalance) throws SQLException;
+
+  /**
    * Grava os deltas do cache numa transação só — ou todos, ou nenhum. O saldo resultante nunca fica
    * negativo: o cache já validou, então isso só acontece com escrita concorrente de outro servidor,
    * e aí o saldo é zerado.

@@ -88,6 +88,12 @@ class AccountServiceTest {
     }
 
     @Override
+    public boolean ensureAccount(UUID uuid, String name, long startingBalance)
+        throws SQLException {
+      return delegate.ensureAccount(uuid, name, startingBalance);
+    }
+
+    @Override
     public GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance)
         throws SQLException {
       return delegate.applyGuarded(uuid, delta, maxBalance);
@@ -432,7 +438,7 @@ class AccountServiceTest {
     assertEquals(OptionalLong.of(100), service.balance(bob));
   }
 
-  /** Re-revisão do PR #1 (C1): dois flushes da mesma conta em voo deixavam o piso criar dinheiro. */
+  /** Re-revisão do PR #1 (C1): dois flushes da mesma conta em voo criavam dinheiro pelo piso. */
   @Test
   void failedCreditFollowedByADebitFlushCannotCreateMoney() throws Exception {
     login(alice, "alice"); // 100

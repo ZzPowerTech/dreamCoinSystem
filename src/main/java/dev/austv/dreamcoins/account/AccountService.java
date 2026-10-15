@@ -16,8 +16,10 @@ import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
@@ -153,7 +155,7 @@ public final class AccountService {
   }
 
   /**
-   * Periódico: grava os pendentes (inclusive os que voltaram de um flush falho) das contas sem flush
+   * Periódico: grava os pendentes (inclusive os que voltaram de um flush falho) de contas sem flush
    * em voo, e despeja as contas offline que ficaram quites sem precisar de flush.
    */
   public void flushAll() {
@@ -362,17 +364,80 @@ public final class AccountService {
    * voo (ver a terceira invariante do {@link AccountLedger}).
    */
   public CompletableFuture<GuardedResult> applyOffline(UUID uuid, long delta) {
+    return submitOffline(uuid, delta).onMain();
+  }
+
+  /**
+   * Como {@link #applyOffline}, mas <b>espera o resultado</b> — para a API síncrona do Vault.
+   * Chamado na main thread, espera o futuro <i>cru</i> do banco: esperar o que completa na main
+   * thread travaria para sempre. A thread do banco nunca espera a main, então não há impasse; o
+   * ajuste do ledger (reserva, crédito) chega no tick seguinte, pelo callback de sempre.
+   *
+   * @throws TimeoutException se o banco não respondeu a tempo — o resultado é <b>incerto</b>: a
+   *     escrita pode ainda ser aplicada
+   */
+  public GuardedResult applyOfflineBlocking(UUID uuid, long delta, long timeoutMillis)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return submitOffline(uuid, delta).raw().get(timeoutMillis, TimeUnit.MILLISECONDS);
+  }
+
+  /** Saldo de qualquer conta: do cache, ou lido do banco esperando. Vazio se não existe. */
+  public OptionalLong balanceBlocking(UUID uuid, long timeoutMillis)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    if (ledger.contains(uuid)) {
+      return ledger.balance(uuid);
+    }
+    return db.submit(() -> storage.balance(uuid))
+        .future()
+        .get(timeoutMillis, TimeUnit.MILLISECONDS);
+  }
+
+  /** Dono de um nome (o último a entrar com ele), lido do banco esperando. */
+  public Optional<UUID> findUuidBlocking(String name, long timeoutMillis)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return db.submit(() -> storage.findByName(name))
+        .future()
+        .get(timeoutMillis, TimeUnit.MILLISECONDS)
+        .map(StoredAccount::uuid);
+  }
+
+  /**
+   * Garante que a conta existe, criando-a com o saldo inicial se faltar. Não conta como login: o
+   * {@code last_seen} fica intacto, para não roubar um nome reaproveitado.
+   *
+   * @return {@code true} se a conta foi criada agora
+   */
+  public boolean ensureAccountBlocking(UUID uuid, String name, long timeoutMillis)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    if (ledger.contains(uuid)) {
+      return false;
+    }
+    long starting = startingBalance;
+    return db.submit(() -> storage.ensureAccount(uuid, name, starting))
+        .future()
+        .get(timeoutMillis, TimeUnit.MILLISECONDS);
+  }
+
+  /** A escrita offline submetida: o futuro cru do banco e o que completa na main thread. */
+  private record OfflineWrite(
+      CompletableFuture<GuardedResult> raw, CompletableFuture<GuardedResult> onMain) {
+
+    static OfflineWrite done(GuardedResult result) {
+      CompletableFuture<GuardedResult> completed = CompletableFuture.completedFuture(result);
+      return new OfflineWrite(completed, completed);
+    }
+  }
+
+  private OfflineWrite submitOffline(UUID uuid, long delta) {
     // Fora da faixa é recusado antes de virar reserva: duas reservas de Long.MAX_VALUE estourariam
     // o saldo interno, e -Long.MIN_VALUE nem existe.
     if (delta == Long.MIN_VALUE || Math.abs(delta) > ledger.maxBalance()) {
       Outcome refusal = delta < 0 ? Outcome.INSUFFICIENT : Outcome.EXCEEDS_MAX;
-      return CompletableFuture.completedFuture(
-          new GuardedResult(refusal, ledger.balance(uuid).orElse(0)));
+      return OfflineWrite.done(new GuardedResult(refusal, ledger.balance(uuid).orElse(0)));
     }
     if (ledger.contains(uuid)) {
       Outcome outcome = delta >= 0 ? ledger.deposit(uuid, delta) : ledger.withdraw(uuid, -delta);
-      return CompletableFuture.completedFuture(
-          new GuardedResult(outcome, ledger.balance(uuid).orElse(0)));
+      return OfflineWrite.done(new GuardedResult(outcome, ledger.balance(uuid).orElse(0)));
     }
     long max = ledger.maxBalance();
     Submitted<GuardedResult> write = db.submit(() -> storage.applyGuarded(uuid, delta, max));
@@ -398,6 +463,6 @@ public final class AccountService {
               }
             },
             mainThread);
-    return out;
+    return new OfflineWrite(write.future(), out);
   }
 }

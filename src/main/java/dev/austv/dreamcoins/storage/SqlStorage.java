@@ -104,6 +104,19 @@ public abstract class SqlStorage implements Storage {
   }
 
   @Override
+  public boolean ensureAccount(UUID uuid, String name, long startingBalance) throws SQLException {
+    try (Connection connection = dataSource.getConnection();
+        PreparedStatement insert = connection.prepareStatement(insertIgnoreSql())) {
+      insert.setString(1, uuid.toString());
+      insert.setString(2, name == null ? "" : name);
+      insert.setLong(3, startingBalance);
+      insert.setLong(4, System.currentTimeMillis());
+      insert.setLong(5, 0);
+      return insert.executeUpdate() == 1;
+    }
+  }
+
+  @Override
   public List<Delta> applyDeltas(List<Delta> deltas) throws SQLException {
     List<Delta> nonZero = deltas.stream().filter(d -> d.amount() != 0).toList();
     if (nonZero.isEmpty()) {

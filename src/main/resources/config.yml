@@ -31,3 +31,18 @@ accounts:
   # Só MySQL: a cada quantos segundos o saldo dos online é relido do banco,
   # para mostrar o que outro servidor gravou.
   resync-interval-seconds: 30
+
+# Proteções do /pagar.
+payments:
+  # Menor pagamento aceito.
+  min-amount: "1 bronze"
+  # Maior pagamento aceito; "0" = sem limite.
+  max-amount: "0"
+  # Intervalo mínimo entre dois pagamentos do mesmo jogador (bypass: dreamcoins.bypass.cooldown).
+  cooldown-seconds: 3
+  # Acima disto o jogador precisa digitar /pagar confirmar (bypass: dreamcoins.bypass.confirm).
+  # "0" = nunca pede confirmação.
+  confirm-above: "10 ouro"
+  confirm-timeout-seconds: 30
+  # Permite pagar quem está offline (desde que já tenha entrado alguma vez no servidor).
+  allow-offline: true

@@ -2,6 +2,7 @@ package dev.austv.dreamcoins.config;
 
 import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.money.MoneyParser;
+import dev.austv.dreamcoins.payment.PaymentPolicy;
 import dev.austv.dreamcoins.storage.MySqlStorage;
 import dev.austv.dreamcoins.storage.StorageType;
 import java.util.Optional;
@@ -19,7 +20,8 @@ public record PluginConfig(
     long startingBalance,
     long maxBalance,
     int flushIntervalSeconds,
-    int resyncIntervalSeconds) {
+    int resyncIntervalSeconds,
+    PaymentPolicy.Rules payments) {
 
   /**
    * Teto absoluto do saldo, em bronze (9.999.999.999 ouro, 999 prata e 99 bronze). O Vault recebe
@@ -70,7 +72,41 @@ public record PluginConfig(
         starting,
         max,
         positive(root, "accounts.flush-interval-seconds", 10, warn),
-        positive(root, "accounts.resync-interval-seconds", 30, warn));
+        positive(root, "accounts.resync-interval-seconds", 30, warn),
+        payments(root, max, warn));
+  }
+
+  /** A seção {@code payments}: as proteções do {@code /pagar}. */
+  private static PaymentPolicy.Rules payments(
+      ConfigurationSection root, long maxBalance, Consumer<String> warn) {
+    long min = money(root, "payments.min-amount", 1, warn);
+    if (min == 0) {
+      min = 1; // pagar zero não é pagamento
+    }
+    long max = money(root, "payments.max-amount", 0, warn);
+    long confirmAbove =
+        money(root, "payments.confirm-above", Money.of(10, 0, 0).totalBronze(), warn);
+    if (max > 0 && max < min) {
+      warn.accept("payments.max-amount menor que payments.min-amount; ignorando o máximo.");
+      max = 0;
+    }
+    return new PaymentPolicy.Rules(
+        min,
+        Math.min(max, maxBalance),
+        nonNegative(root, "payments.cooldown-seconds", 3, warn) * 1000L,
+        confirmAbove,
+        positive(root, "payments.confirm-timeout-seconds", 30, warn) * 1000L,
+        root.getBoolean("payments.allow-offline", true));
+  }
+
+  private static int nonNegative(
+      ConfigurationSection root, String key, int fallback, Consumer<String> warn) {
+    int value = root.getInt(key, fallback);
+    if (value < 0) {
+      warn.accept(key + " não pode ser negativo; usando " + fallback + ".");
+      return fallback;
+    }
+    return value;
   }
 
   private static long money(

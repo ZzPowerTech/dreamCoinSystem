@@ -15,6 +15,9 @@ commands:
     description: Administração das moedas (dar, tirar, definir, recarregar).
     usage: /moedas <give|take|set> <jogador> <quantia> | /moedas reload
     aliases: [dreamcoins]
+  pagar:
+    description: Paga outro jogador em ouro, prata e bronze.
+    usage: /pagar <jogador> <quantia> | /pagar confirmar
 
 permissions:
   dreamcoins.balance:
@@ -25,4 +28,13 @@ permissions:
     default: op
   dreamcoins.admin:
     description: /moedas give, take, set e reload.
+    default: op
+  dreamcoins.pay:
+    description: Pagar outros jogadores com /pagar.
+    default: true
+  dreamcoins.bypass.cooldown:
+    description: Sem intervalo mínimo entre pagamentos.
+    default: op
+  dreamcoins.bypass.confirm:
+    description: Pagamentos altos sem /pagar confirmar.
     default: op

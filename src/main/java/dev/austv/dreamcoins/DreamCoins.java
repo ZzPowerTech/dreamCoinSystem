@@ -4,8 +4,11 @@ import dev.austv.dreamcoins.account.AccountListener;
 import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.command.AdminCommand;
 import dev.austv.dreamcoins.command.BalanceCommand;
+import dev.austv.dreamcoins.command.PayCommand;
 import dev.austv.dreamcoins.config.Messages;
 import dev.austv.dreamcoins.config.PluginConfig;
+import dev.austv.dreamcoins.payment.PaymentPolicy;
+import dev.austv.dreamcoins.payment.PaymentService;
 import dev.austv.dreamcoins.storage.MySqlStorage;
 import dev.austv.dreamcoins.storage.SequencedExecutor;
 import dev.austv.dreamcoins.storage.SqliteStorage;
@@ -24,6 +27,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 public final class DreamCoins extends JavaPlugin {
 
   private PluginConfig config;
+  /** Regras do /pagar: valem a quente no reload, mesmo quando outra parte pede reinício. */
+  private volatile PaymentPolicy.Rules paymentRules;
   private Messages messages;
   private AccountService accounts;
 
@@ -69,6 +74,14 @@ public final class DreamCoins extends JavaPlugin {
     AdminCommand admin = new AdminCommand(accounts, messages, getLogger(), this::reload);
     Objects.requireNonNull(getCommand("moedas")).setExecutor(admin);
     Objects.requireNonNull(getCommand("moedas")).setTabCompleter(admin);
+    paymentRules = config.payments();
+    PaymentService payments =
+        new PaymentService(
+            accounts, () -> paymentRules, System::currentTimeMillis, getLogger());
+    PayCommand pay = new PayCommand(accounts, payments, messages, getLogger());
+    Objects.requireNonNull(getCommand("pagar")).setExecutor(pay);
+    Objects.requireNonNull(getCommand("pagar")).setTabCompleter(pay);
+    getServer().getPluginManager().registerEvents(pay, this);
 
     scheduleTasks();
     String backend = config.storageType().name().toLowerCase(Locale.ROOT);
@@ -100,6 +113,7 @@ public final class DreamCoins extends JavaPlugin {
             || !fresh.mysql().equals(config.mysql())
             || fresh.flushIntervalSeconds() != config.flushIntervalSeconds()
             || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds();
+    paymentRules = fresh.payments();
     if (!needsRestart) {
       config = fresh;
     }

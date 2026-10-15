@@ -89,7 +89,13 @@ public final class PaymentService {
       return done(Status.NO_PENDING, 0, payer, 0, null, null);
     }
     return decideAndRun(
-        payer, request.target(), request.targetName(), request.amount(), bypassCooldown, true, true);
+        payer,
+        request.target(),
+        request.targetName(),
+        request.amount(),
+        bypassCooldown,
+        true,
+        true);
   }
 
   /** O jogador saiu: o pedido à espera de confirmação morre com a sessão. */

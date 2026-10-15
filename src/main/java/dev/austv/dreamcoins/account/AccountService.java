@@ -373,7 +373,7 @@ public final class AccountService {
 
   /**
    * Grava já o pendente de uma conta (se ela não tem flush em voo). Usado antes de uma escrita
-   * offline que depende de um débito do cache: a fila é FIFO, então o débito chega ao banco antes do
+   * offline que depende de um débito do cache: a fila é FIFO: o débito chega ao banco antes do
    * crédito, e um crash no meio perde dinheiro em vez de criá-lo.
    */
   public void flushNow(UUID uuid) {

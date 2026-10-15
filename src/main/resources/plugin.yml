@@ -6,6 +6,9 @@ description: Economia de três moedas (ouro, prata, bronze) do servidor Dream.
 authors: [ZzPowerTech]
 website: https://github.com/ZzPowerTech/dreamCoinSystem
 
+# O Vault é a API principal: sem ele lojas e leilões não enxergam as moedas.
+depend: [Vault]
+
 # Nunca registrar /pay, /balance nem /eco: colidem com o Essentials.
 commands:
   saldo:

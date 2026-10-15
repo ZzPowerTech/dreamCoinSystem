@@ -170,6 +170,7 @@ public final class AdminCommand implements TabExecutor {
               Placeholder.unparsed("max", format(accounts.maxBalance())));
       case BUSY -> messages.send(sender, "admin.busy", player);
       case NO_ACCOUNT -> messages.send(sender, "errors.unknown-player", player);
+      case UNAVAILABLE -> messages.send(sender, "errors.database");
     }
   }
 

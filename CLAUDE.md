@@ -95,9 +95,15 @@ pré-login, `/saldo`, CI.
   dinheiro do mesmo jeito, e um depósito "falho" é duplicação com plugins que repagam na falha. Só
   sobra incerteza se a tarefa **já começou** — aí espera-se o resultado real (até 30 s; o MySQL
   tem `socketTimeout` de 20 s) e o log avisa se nem isso bastar.
-- **Disjuntor do banco**: depois de um timeout, operação bloqueante nova falha **na hora** até a
-  fila do banco andar até uma tarefa-sonda. Sem ele, um leilão pagando vinte vendedores offline num
-  tick esperaria vinte timeouts e o watchdog do Paper (60 s) derrubaria o servidor.
+- **Disjuntor do banco**: timeout **ou falha** de uma operação bloqueante o abre, e daí em diante
+  operação bloqueante nova falha **na hora**. Ele só fecha quando uma sonda que **consulta o banco**
+  (`Storage#ping`) dá certo; falhando, outra vem 5 s depois. Sem ele, um leilão pagando vinte
+  vendedores offline num tick esperaria vinte timeouts e o watchdog do Paper (60 s) derrubaria o
+  servidor. A primeira versão fechava quando a fila andava e só abria no timeout: numa queda a
+  tarefa pegava a claim na hora e esperava o timeout de conexão, a sonda fechava logo depois, e
+  cada chamada congelava a main thread de novo (re-revisão do PR #2). O `connectionTimeout` do
+  MySQL é 3 s para a primeira espera de uma queda ser curta. "Resultado desconhecido" (tarefa
+  começou e não terminou em 30 s) é `OutcomeUnknownException`, separado de "nada foi alterado".
 - **Serviço fechado depois do shutdown** (I1): toda mutação devolve `UNAVAILABLE`, e o
   `DreamEconomy` recusa com o plugin desligado. Lojas guardam a referência do provedor no
   `onEnable` delas; depois de um disable/reload só deste plugin, a instância antiga aceitava saque

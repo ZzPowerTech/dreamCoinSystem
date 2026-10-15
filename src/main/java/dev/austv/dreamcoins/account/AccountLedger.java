@@ -203,6 +203,21 @@ public final class AccountLedger {
 
   // ---------------------------------------------------------------- mutações
 
+  /**
+   * Devolve um débito recém-feito que não pôde ser concluído (o crédito do outro lado falhou).
+   * Como {@link #deposit}, mas <b>sem o teto</b>: o dinheiro já era do jogador, e recusar a
+   * devolução porque ele recebeu algo no meio-tempo faria o dinheiro sumir.
+   */
+  public Outcome refund(UUID uuid, long amount) {
+    requireNonNegative(amount);
+    Entry entry = entries.get(uuid);
+    if (entry == null) {
+      return Outcome.NO_ACCOUNT;
+    }
+    apply(entry, amount);
+    return Outcome.OK;
+  }
+
   public Outcome deposit(UUID uuid, long amount) {
     requireNonNegative(amount);
     Entry entry = entries.get(uuid);

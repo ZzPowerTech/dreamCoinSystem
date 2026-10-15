@@ -359,6 +359,27 @@ public final class AccountService {
     return ledger.set(uuid, amount);
   }
 
+  /**
+   * Devolve um débito que não pôde ser concluído. No cache vai sem teto (ver {@link
+   * AccountLedger#refund}); se a conta já saiu do cache, vai pelo banco como crédito, e aí o teto
+   * do banco vale — quem chama precisa registrar a recusa, porque é dinheiro a devolver à mão.
+   */
+  public CompletableFuture<Outcome> refund(UUID uuid, long amount) {
+    if (ledger.contains(uuid)) {
+      return CompletableFuture.completedFuture(ledger.refund(uuid, amount));
+    }
+    return applyOffline(uuid, amount).thenApply(GuardedResult::outcome);
+  }
+
+  /**
+   * Grava já o pendente de uma conta (se ela não tem flush em voo). Usado antes de uma escrita
+   * offline que depende de um débito do cache: a fila é FIFO, então o débito chega ao banco antes do
+   * crédito, e um crash no meio perde dinheiro em vez de criá-lo.
+   */
+  public void flushNow(UUID uuid) {
+    ledger.takePending(uuid).ifPresent(delta -> submitFlush(List.of(delta)));
+  }
+
   public Outcome transfer(UUID from, UUID to, long amount) {
     return ledger.transfer(from, to, amount);
   }

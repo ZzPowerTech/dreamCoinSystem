@@ -21,6 +21,14 @@ public interface Storage extends AutoCloseable {
   /** Abre o pool e cria as tabelas que faltarem. */
   void open() throws SQLException;
 
+  /**
+   * Confirma que o banco responde, com uma consulta de verdade. É a sonda do disjuntor: ele só
+   * fecha quando isto passa.
+   */
+  default void ping() throws SQLException {
+    balance(new UUID(0, 0));
+  }
+
   /** Lê a conta, criando-a com {@code startingBalance} se não existir; atualiza o nome. */
   long loadOrCreate(UUID uuid, String name, long startingBalance) throws SQLException;
 

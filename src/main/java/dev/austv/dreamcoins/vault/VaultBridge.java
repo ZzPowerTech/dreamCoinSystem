@@ -3,6 +3,7 @@ package dev.austv.dreamcoins.vault;
 import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.account.DatabaseUnavailableException;
+import dev.austv.dreamcoins.account.OutcomeUnknownException;
 import dev.austv.dreamcoins.money.CoinType;
 import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.money.MoneyFormatter;
@@ -124,6 +125,17 @@ public final class VaultBridge {
     try {
       GuardedResult result = accounts.applyOfflineBlocking(uuid, delta, timeoutMillis);
       return response(result.outcome(), delta, result.balance(), requested);
+    } catch (OutcomeUnknownException unknown) {
+      // O único caso em que a falha pode não ser verdade: a escrita começou e ainda pode gravar.
+      logger.severe(
+          "Vault: alteração de "
+              + delta
+              + " bronze na conta offline "
+              + uuid
+              + " tem resultado DESCONHECIDO ("
+              + unknown.getMessage()
+              + "). Respondi falha, mas ela ainda pode ser aplicada — confira o saldo.");
+      return new EconomyResponse(requested, 0, ResponseType.FAILURE, ERROR_DATABASE);
     } catch (DatabaseUnavailableException unavailable) {
       // Garantia do AccountService: nada foi alterado, então a falha é verdadeira.
       logger.warning(
@@ -175,7 +187,7 @@ public final class VaultBridge {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       return OptionalLong.empty();
-    } catch (ExecutionException | DatabaseUnavailableException error) {
+    } catch (ExecutionException | DatabaseUnavailableException | OutcomeUnknownException error) {
       logDatabase(operation, uuid, error);
       return OptionalLong.empty();
     }

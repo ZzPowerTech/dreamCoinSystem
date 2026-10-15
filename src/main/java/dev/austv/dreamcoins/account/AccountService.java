@@ -49,7 +49,10 @@ public final class AccountService {
 
   private static final long STALE_MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
-  /** Quanto esperar uma operação que já começou no banco antes de declarar o resultado incerto. */
+  /**
+   * Quanto esperar uma operação que já começou no banco antes de declarar o resultado incerto.
+   * Precisa cobrir o pior caso de uma operação: conexão do MySQL (3 s) + socket por comando (20 s).
+   */
   private static final long RUNNING_TASK_WAIT_MILLIS = TimeUnit.SECONDS.toMillis(30);
 
   private final Storage storage;
@@ -76,6 +79,8 @@ public final class AccountService {
 
   /** Disjuntor do banco para as operações bloqueantes (ver {@link #refuseIfUnavailable}). */
   private final AtomicBoolean stalled = new AtomicBoolean();
+
+  private volatile long probeIntervalMillis = TimeUnit.SECONDS.toMillis(5);
 
   public AccountService(
       Storage storage,
@@ -394,7 +399,10 @@ public final class AccountService {
    *     {@link #await})
    */
   public GuardedResult applyOfflineBlocking(UUID uuid, long delta, long timeoutMillis)
-      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+      throws InterruptedException,
+          ExecutionException,
+          DatabaseUnavailableException,
+          OutcomeUnknownException {
     refuseIfUnavailable();
     OfflineWrite write = submitOffline(uuid, delta);
     if (write.claim() == null) {
@@ -405,7 +413,10 @@ public final class AccountService {
 
   /** Saldo de qualquer conta: do cache, ou lido do banco esperando. Vazio se não existe. */
   public OptionalLong balanceBlocking(UUID uuid, long timeoutMillis)
-      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+      throws InterruptedException,
+          ExecutionException,
+          DatabaseUnavailableException,
+          OutcomeUnknownException {
     if (ledger.contains(uuid)) {
       return ledger.balance(uuid);
     }
@@ -419,7 +430,10 @@ public final class AccountService {
 
   /** Dono de um nome (o último a entrar com ele), lido do banco esperando. */
   public Optional<UUID> findUuidBlocking(String name, long timeoutMillis)
-      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+      throws InterruptedException,
+          ExecutionException,
+          DatabaseUnavailableException,
+          OutcomeUnknownException {
     refuseIfUnavailable();
     AtomicBoolean claim = new AtomicBoolean();
     Optional<StoredAccount> found =
@@ -439,7 +453,10 @@ public final class AccountService {
    * @return {@code true} se a conta foi criada agora
    */
   public boolean ensureAccountBlocking(UUID uuid, String name, long timeoutMillis)
-      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+      throws InterruptedException,
+          ExecutionException,
+          DatabaseUnavailableException,
+          OutcomeUnknownException {
     if (ledger.contains(uuid)) {
       return false;
     }
@@ -479,13 +496,24 @@ public final class AccountService {
   /**
    * Espera a tarefa até {@code timeoutMillis}. Passou disso, abre o disjuntor e tenta
    * <b>abandonar</b> a tarefa: ganhando a claim ela não roda nunca, e a falha é verdadeira — nada
-   * mudou. Perdendo, ela já começou, e o resultado real é esperado (o banco tem timeout de socket
-   * próprio, então isso termina).
+   * mudou. Perdendo, ela já começou, e o resultado real é esperado; se nem assim ele vier, o
+   * resultado é <b>desconhecido</b> e isso é dito com outra exceção, porque aí a escrita ainda pode
+   * ser gravada.
+   *
+   * <p>Falha do banco ({@link ExecutionException}) também abre o disjuntor: numa queda a fila
+   * costuma estar vazia, a tarefa pega a claim na hora e fica presa no {@code getConnection} — sem
+   * abrir aqui, cada chamada seguinte congelaria a main thread pelo timeout de conexão inteiro.
    */
   private <T> T await(CompletableFuture<T> future, AtomicBoolean claim, long timeoutMillis)
-      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+      throws InterruptedException,
+          ExecutionException,
+          DatabaseUnavailableException,
+          OutcomeUnknownException {
     try {
       return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
+    } catch (ExecutionException failed) {
+      openBreaker();
+      throw failed;
     } catch (TimeoutException slow) {
       openBreaker();
       if (claim.compareAndSet(false, true)) {
@@ -494,27 +522,55 @@ public final class AccountService {
       }
       try {
         return future.get(RUNNING_TASK_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+      } catch (ExecutionException failed) {
+        throw failed;
       } catch (TimeoutException stuck) {
-        logger.severe(
-            "Operação no banco começou e não terminou em "
-                + RUNNING_TASK_WAIT_MILLIS
-                + " ms; o resultado é desconhecido. Confira o saldo envolvido.");
-        throw new DatabaseUnavailableException("resultado desconhecido");
+        throw new OutcomeUnknownException(
+            "operação começou no banco e não terminou em " + RUNNING_TASK_WAIT_MILLIS + " ms");
       }
     }
   }
 
-  /** O disjuntor fecha sozinho quando a fila do banco andar até uma tarefa submetida agora. */
+  /**
+   * Abre o disjuntor e agenda a sonda. Ele só fecha quando a sonda <b>acessar o banco com
+   * sucesso</b> ({@link Storage#ping}); falhando, outra sonda vem depois de {@code
+   * probeIntervalMillis}. Fechar só porque a fila andou fecharia com o banco ainda fora.
+   */
   private void openBreaker() {
     if (stalled.compareAndSet(false, true)) {
       logger.warning(
-          "Banco lento: operações offline do Vault falham na hora até a fila do banco esvaziar.");
-      db.submit(
-          () -> {
-            stalled.set(false);
-            return null;
-          });
+          "Banco indisponível ou lento: operações offline do Vault falham na hora até o banco"
+              + " responder de novo.");
+      probe();
     }
+  }
+
+  private void probe() {
+    if (closed) {
+      return;
+    }
+    db.submit(
+            () -> {
+              storage.ping();
+              return null;
+            })
+        .future()
+        .whenComplete(
+            (ignored, error) -> {
+              if (error == null) {
+                stalled.set(false);
+                logger.info("Banco respondeu de novo; disjuntor fechado.");
+              } else {
+                CompletableFuture.runAsync(
+                    this::probe,
+                    CompletableFuture.delayedExecutor(probeIntervalMillis, TimeUnit.MILLISECONDS));
+              }
+            });
+  }
+
+  /** Intervalo entre sondas com o disjuntor aberto. Configurável para os testes. */
+  public void setProbeIntervalMillis(long probeIntervalMillis) {
+    this.probeIntervalMillis = probeIntervalMillis;
   }
 
   /**

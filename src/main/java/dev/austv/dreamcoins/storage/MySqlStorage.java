@@ -47,7 +47,7 @@ public final class MySqlStorage extends SqlStorage {
             + credentials.database()
             // socketTimeout: nenhuma consulta nossa leva segundos; sem ele, uma conexão morta
             // seguraria a thread do banco (e quem a espera) para sempre.
-            + "?useUnicode=true&characterEncoding=utf8&connectTimeout=10000&socketTimeout=20000&"
+            + "?useUnicode=true&characterEncoding=utf8&connectTimeout=3000&socketTimeout=20000&"
             + transportParameters());
     config.setUsername(credentials.username());
     config.setPassword(credentials.password());
@@ -57,7 +57,9 @@ public final class MySqlStorage extends SqlStorage {
     config.setMaxLifetime(TimeUnit.MINUTES.toMillis(4));
     config.setIdleTimeout(TimeUnit.MINUTES.toMillis(2));
     config.setKeepaliveTime(TimeUnit.MINUTES.toMillis(1));
-    config.setConnectionTimeout(TimeUnit.SECONDS.toMillis(10));
+    // Curto de propósito: numa queda, a primeira operação offline do Vault espera por isto na main
+    // thread antes de o disjuntor abrir. As seguintes falham na hora.
+    config.setConnectionTimeout(TimeUnit.SECONDS.toMillis(3));
     return config;
   }
 

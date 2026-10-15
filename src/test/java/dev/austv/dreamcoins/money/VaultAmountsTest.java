@@ -24,6 +24,22 @@ class VaultAmountsTest {
     assertEquals(OptionalLong.of(1_002_003), VaultAmounts.toBronzeFloor(10020.03));
   }
 
+  /** Revisão do PR #2 (I2): preço calculado em double não pode custar 1 bronze a mais. */
+  @Test
+  void floatingPointNoiseIsNotChargedToThePlayer() {
+    assertEquals(OptionalLong.of(30), VaultAmounts.toBronzeCeil(0.1 + 0.2));
+    assertEquals(OptionalLong.of(5700), VaultAmounts.toBronzeFloor(0.57 * 100));
+    assertEquals(OptionalLong.of(5700), VaultAmounts.toBronzeCeil(0.57 * 100));
+    assertEquals(OptionalLong.of(3333), VaultAmounts.toBronzeFloor(100.0 / 3));
+    assertEquals(OptionalLong.of(3334), VaultAmounts.toBronzeCeil(100.0 / 3));
+  }
+
+  @Test
+  void repeatedSubBronzeDepositsStillCreateNothing() {
+    assertEquals(OptionalLong.of(0), VaultAmounts.toBronzeFloor(0.005));
+    assertEquals(OptionalLong.of(0), VaultAmounts.toBronzeFloor(0.009999));
+  }
+
   @Test
   void depositRoundsDownWithdrawRoundsUp() {
     assertEquals(OptionalLong.of(0), VaultAmounts.toBronzeFloor(0.009));

@@ -306,6 +306,10 @@ public final class DreamEconomy implements Economy {
   }
 
   private <T> T onMain(Callable<T> call, T fallback) {
+    if (!plugin.isEnabled()) {
+      // Referência guardada por outro plugin depois de um disable só deste: recusa, nunca finge.
+      return fallback;
+    }
     try {
       if (Bukkit.isPrimaryThread()) {
         return call.call();

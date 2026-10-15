@@ -15,6 +15,7 @@ import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.logging.Logger;
 import net.milkbowl.vault.economy.EconomyResponse;
@@ -247,6 +248,69 @@ class VaultBridgeTest {
     logout(alice);
     vault.createAccount(bob, "Fox"); // criado por plugin, nunca entrou
     assertEquals(alice, accounts.findUuidBlocking("fox", 5_000).orElseThrow());
+  }
+
+  // ---- revisão do PR #2 ----
+
+  /** I1: referência antiga ao provedor, guardada por uma loja, depois de um disable só deste. */
+  @Test
+  void staleProviderAfterShutdownRefusesEverything() throws Exception {
+    login(alice, "alice");
+    accounts.shutdown();
+    assertEquals(ResponseType.FAILURE, vault.withdraw(alice, 0.30).type);
+    assertEquals(ResponseType.FAILURE, vault.deposit(alice, 0.30).type);
+    assertEquals(ResponseType.FAILURE, vault.withdraw(bob, 0.30).type);
+    try (SqliteStorage reopened = new SqliteStorage(dir.resolve("coins.db"))) {
+      reopened.open();
+      assertEquals(OptionalLong.of(100), reopened.balance(alice));
+    }
+  }
+
+  /** I3: banco travado — a falha é verdadeira e o disjuntor poupa a main thread. */
+  @Test
+  void stuckDatabaseFailsTruthfullyAndTheBreakerSparesTheMainThread() throws Exception {
+    login(bob, "bob");
+    logout(bob); // 100 no banco
+    VaultBridge impatient =
+        new VaultBridge(accounts, MoneyFormatter::defaults, 200, Logger.getLogger("test"));
+    CountDownLatch gate = new CountDownLatch(1);
+    db.submit(
+        () -> {
+          gate.await();
+          return null;
+        });
+
+    assertEquals(ResponseType.FAILURE, impatient.withdraw(bob, 0.50).type); // esperou 200 ms
+    long start = System.nanoTime();
+    assertEquals(ResponseType.FAILURE, impatient.withdraw(bob, 0.50).type); // disjuntor: na hora
+    assertEquals(ResponseType.FAILURE, impatient.deposit(bob, 0.50).type);
+    assertTrue(System.nanoTime() - start < 100_000_000L, "disjuntor aberto não pode esperar");
+
+    gate.countDown();
+    settle();
+    assertEquals(100, stored(bob), "a operação abandonada não pode ter rodado");
+    assertEquals(ResponseType.SUCCESS, impatient.withdraw(bob, 0.50).type); // disjuntor fechou
+    assertEquals(50, stored(bob));
+  }
+
+  @Test
+  void abandonedWithdrawalReleasesTheReservationOfAPlayerWhoJoined() throws Exception {
+    VaultBridge impatient =
+        new VaultBridge(accounts, MoneyFormatter::defaults, 200, Logger.getLogger("test"));
+    accounts.preload(bob, "bob", 5_000); // lê 100
+    CountDownLatch gate = new CountDownLatch(1);
+    db.submit(
+        () -> {
+          gate.await();
+          return null;
+        });
+    assertEquals(ResponseType.FAILURE, impatient.withdraw(bob, 1.00).type);
+    online.add(bob);
+    accounts.join(bob, "bob"); // a reserva ainda está contada
+    gate.countDown();
+    settle();
+    assertEquals(OptionalLong.of(100), accounts.balance(bob));
+    assertEquals(100, stored(bob));
   }
 
   // ---- formatação ----

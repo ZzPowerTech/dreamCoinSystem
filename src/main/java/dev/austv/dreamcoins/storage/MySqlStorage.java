@@ -45,7 +45,9 @@ public final class MySqlStorage extends SqlStorage {
             + credentials.port()
             + "/"
             + credentials.database()
-            + "?useUnicode=true&characterEncoding=utf8&"
+            // socketTimeout: nenhuma consulta nossa leva segundos; sem ele, uma conexão morta
+            // seguraria a thread do banco (e quem a espera) para sempre.
+            + "?useUnicode=true&characterEncoding=utf8&connectTimeout=10000&socketTimeout=20000&"
             + transportParameters());
     config.setUsername(credentials.username());
     config.setPassword(credentials.password());

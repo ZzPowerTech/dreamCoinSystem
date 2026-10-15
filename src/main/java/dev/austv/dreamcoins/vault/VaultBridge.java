@@ -2,6 +2,7 @@ package dev.austv.dreamcoins.vault;
 
 import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import dev.austv.dreamcoins.account.AccountService;
+import dev.austv.dreamcoins.account.DatabaseUnavailableException;
 import dev.austv.dreamcoins.money.CoinType;
 import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.money.MoneyFormatter;
@@ -10,7 +11,6 @@ import dev.austv.dreamcoins.storage.GuardedResult;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -124,16 +124,16 @@ public final class VaultBridge {
     try {
       GuardedResult result = accounts.applyOfflineBlocking(uuid, delta, timeoutMillis);
       return response(result.outcome(), delta, result.balance(), requested);
-    } catch (TimeoutException timeout) {
-      // O pior caso: a escrita continua na fila e pode ser aplicada depois desta resposta.
-      logger.severe(
-          "Vault: o banco não respondeu em "
-              + timeoutMillis
-              + " ms a uma alteração de "
+    } catch (DatabaseUnavailableException unavailable) {
+      // Garantia do AccountService: nada foi alterado, então a falha é verdadeira.
+      logger.warning(
+          "Vault: alteração de "
               + delta
               + " bronze na conta offline "
               + uuid
-              + ". Respondi falha, mas a alteração ainda pode ser aplicada — confira o saldo.");
+              + " recusada sem efeito ("
+              + unavailable.getMessage()
+              + ").");
       return new EconomyResponse(requested, 0, ResponseType.FAILURE, ERROR_DATABASE);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
@@ -158,6 +158,8 @@ public final class VaultBridge {
       case NO_ACCOUNT ->
           new EconomyResponse(requested, balance, ResponseType.FAILURE, ERROR_NO_ACCOUNT);
       case BUSY -> new EconomyResponse(requested, balance, ResponseType.FAILURE, ERROR_BUSY);
+      case UNAVAILABLE ->
+          new EconomyResponse(requested, balance, ResponseType.FAILURE, ERROR_DATABASE);
     };
   }
 
@@ -173,7 +175,7 @@ public final class VaultBridge {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       return OptionalLong.empty();
-    } catch (ExecutionException | TimeoutException error) {
+    } catch (ExecutionException | DatabaseUnavailableException error) {
       logDatabase(operation, uuid, error);
       return OptionalLong.empty();
     }

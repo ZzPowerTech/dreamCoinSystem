@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
@@ -48,6 +49,9 @@ public final class AccountService {
 
   private static final long STALE_MAX_AGE_MILLIS = TimeUnit.MINUTES.toMillis(5);
 
+  /** Quanto esperar uma operação que já começou no banco antes de declarar o resultado incerto. */
+  private static final long RUNNING_TASK_WAIT_MILLIS = TimeUnit.SECONDS.toMillis(30);
+
   private final Storage storage;
   private final SequencedExecutor db;
   private final Executor mainThread;
@@ -66,6 +70,12 @@ public final class AccountService {
   private final Map<Long, Batch> batches = new LinkedHashMap<>();
 
   private volatile long startingBalance;
+
+  /** Ligado no início do {@link #shutdown}: dali em diante nenhuma mutação é aceita. */
+  private volatile boolean closed;
+
+  /** Disjuntor do banco para as operações bloqueantes (ver {@link #refuseIfUnavailable}). */
+  private final AtomicBoolean stalled = new AtomicBoolean();
 
   public AccountService(
       Storage storage,
@@ -194,6 +204,7 @@ public final class AccountService {
    * aceita tarefas — por isso espera os futuros crus, sem callback.
    */
   public void shutdown() {
+    closed = true;
     try {
       // Esvazia a fila: depois disto todo flush em voo já tem resultado.
       db.submit(() -> null).future().get(15, TimeUnit.SECONDS);
@@ -338,20 +349,26 @@ public final class AccountService {
 
   // ---------------------------------------------------------------- mutações no cache
 
+  /*
+   * Depois do shutdown toda mutação devolve UNAVAILABLE. Um plugin que guardou a referência do
+   * provedor do Vault continua chamando a instância antiga depois de um disable/reload só deste
+   * plugin; sem a trava, um saque em conta do cache daria SUCCESS sem nada chegar ao banco.
+   */
+
   public Outcome deposit(UUID uuid, long amount) {
-    return ledger.deposit(uuid, amount);
+    return closed ? Outcome.UNAVAILABLE : ledger.deposit(uuid, amount);
   }
 
   public Outcome withdraw(UUID uuid, long amount) {
-    return ledger.withdraw(uuid, amount);
+    return closed ? Outcome.UNAVAILABLE : ledger.withdraw(uuid, amount);
   }
 
   public Outcome set(UUID uuid, long amount) {
-    return ledger.set(uuid, amount);
+    return closed ? Outcome.UNAVAILABLE : ledger.set(uuid, amount);
   }
 
   public Outcome transfer(UUID from, UUID to, long amount) {
-    return ledger.transfer(from, to, amount);
+    return closed ? Outcome.UNAVAILABLE : ledger.transfer(from, to, amount);
   }
 
   // ---------------------------------------------------------------- mutações fora do cache
@@ -373,32 +390,46 @@ public final class AccountService {
    * thread travaria para sempre. A thread do banco nunca espera a main, então não há impasse; o
    * ajuste do ledger (reserva, crédito) chega no tick seguinte, pelo callback de sempre.
    *
-   * @throws TimeoutException se o banco não respondeu a tempo — o resultado é <b>incerto</b>: a
-   *     escrita pode ainda ser aplicada
+   * @throws DatabaseUnavailableException se não rodou — e então <b>nada</b> foi alterado (ver
+   *     {@link #await})
    */
   public GuardedResult applyOfflineBlocking(UUID uuid, long delta, long timeoutMillis)
-      throws InterruptedException, ExecutionException, TimeoutException {
-    return submitOffline(uuid, delta).raw().get(timeoutMillis, TimeUnit.MILLISECONDS);
+      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+    refuseIfUnavailable();
+    OfflineWrite write = submitOffline(uuid, delta);
+    if (write.claim() == null) {
+      return write.raw().get(); // resolvido no cache ou recusado antes de ir ao banco
+    }
+    return await(write.raw(), write.claim(), timeoutMillis);
   }
 
   /** Saldo de qualquer conta: do cache, ou lido do banco esperando. Vazio se não existe. */
   public OptionalLong balanceBlocking(UUID uuid, long timeoutMillis)
-      throws InterruptedException, ExecutionException, TimeoutException {
+      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
     if (ledger.contains(uuid)) {
       return ledger.balance(uuid);
     }
-    return db.submit(() -> storage.balance(uuid))
-        .future()
-        .get(timeoutMillis, TimeUnit.MILLISECONDS);
+    refuseIfUnavailable();
+    AtomicBoolean claim = new AtomicBoolean();
+    return await(
+        db.submit(claimed(claim, () -> storage.balance(uuid), OptionalLong.empty())).future(),
+        claim,
+        timeoutMillis);
   }
 
   /** Dono de um nome (o último a entrar com ele), lido do banco esperando. */
   public Optional<UUID> findUuidBlocking(String name, long timeoutMillis)
-      throws InterruptedException, ExecutionException, TimeoutException {
-    return db.submit(() -> storage.findByName(name))
-        .future()
-        .get(timeoutMillis, TimeUnit.MILLISECONDS)
-        .map(StoredAccount::uuid);
+      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+    refuseIfUnavailable();
+    AtomicBoolean claim = new AtomicBoolean();
+    Optional<StoredAccount> found =
+        await(
+            db.submit(
+                    claimed(claim, () -> storage.findByName(name), Optional.<StoredAccount>empty()))
+                .future(),
+            claim,
+            timeoutMillis);
+    return found.map(StoredAccount::uuid);
   }
 
   /**
@@ -408,27 +439,103 @@ public final class AccountService {
    * @return {@code true} se a conta foi criada agora
    */
   public boolean ensureAccountBlocking(UUID uuid, String name, long timeoutMillis)
-      throws InterruptedException, ExecutionException, TimeoutException {
+      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
     if (ledger.contains(uuid)) {
       return false;
     }
+    refuseIfUnavailable();
     long starting = startingBalance;
-    return db.submit(() -> storage.ensureAccount(uuid, name, starting))
-        .future()
-        .get(timeoutMillis, TimeUnit.MILLISECONDS);
+    AtomicBoolean claim = new AtomicBoolean();
+    return await(
+        db.submit(claimed(claim, () -> storage.ensureAccount(uuid, name, starting), false))
+            .future(),
+        claim,
+        timeoutMillis);
   }
 
-  /** A escrita offline submetida: o futuro cru do banco e o que completa na main thread. */
+  /**
+   * Disjuntor: com o banco travado, operação bloqueante nova falha na hora em vez de segurar a
+   * main thread. Sem ele, um leilão pagando vinte vendedores offline num tick esperaria vinte
+   * timeouts seguidos, e o watchdog do Paper derrubaria o servidor.
+   */
+  private void refuseIfUnavailable() throws DatabaseUnavailableException {
+    if (closed) {
+      throw new DatabaseUnavailableException("serviço desligado");
+    }
+    if (stalled.get()) {
+      throw new DatabaseUnavailableException("banco travado (disjuntor aberto)");
+    }
+  }
+
+  /**
+   * A tarefa só roda se conseguir a {@code claim} primeiro. Quem espera e desiste também disputa a
+   * claim: se ganhar, a tarefa vira no-op e devolve {@code abandoned}.
+   */
+  private static <T> SequencedExecutor.Task<T> claimed(
+      AtomicBoolean claim, SequencedExecutor.Task<T> task, T abandoned) {
+    return () -> claim.compareAndSet(false, true) ? task.call() : abandoned;
+  }
+
+  /**
+   * Espera a tarefa até {@code timeoutMillis}. Passou disso, abre o disjuntor e tenta
+   * <b>abandonar</b> a tarefa: ganhando a claim ela não roda nunca, e a falha é verdadeira — nada
+   * mudou. Perdendo, ela já começou, e o resultado real é esperado (o banco tem timeout de socket
+   * próprio, então isso termina).
+   */
+  private <T> T await(CompletableFuture<T> future, AtomicBoolean claim, long timeoutMillis)
+      throws InterruptedException, ExecutionException, DatabaseUnavailableException {
+    try {
+      return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException slow) {
+      openBreaker();
+      if (claim.compareAndSet(false, true)) {
+        throw new DatabaseUnavailableException(
+            "banco não respondeu em " + timeoutMillis + " ms; operação abandonada sem efeito");
+      }
+      try {
+        return future.get(RUNNING_TASK_WAIT_MILLIS, TimeUnit.MILLISECONDS);
+      } catch (TimeoutException stuck) {
+        logger.severe(
+            "Operação no banco começou e não terminou em "
+                + RUNNING_TASK_WAIT_MILLIS
+                + " ms; o resultado é desconhecido. Confira o saldo envolvido.");
+        throw new DatabaseUnavailableException("resultado desconhecido");
+      }
+    }
+  }
+
+  /** O disjuntor fecha sozinho quando a fila do banco andar até uma tarefa submetida agora. */
+  private void openBreaker() {
+    if (stalled.compareAndSet(false, true)) {
+      logger.warning(
+          "Banco lento: operações offline do Vault falham na hora até a fila do banco esvaziar.");
+      db.submit(
+          () -> {
+            stalled.set(false);
+            return null;
+          });
+    }
+  }
+
+  /**
+   * A escrita offline submetida: o futuro cru do banco, o que completa na main thread e a claim que
+   * permite abandoná-la ({@code null} se ela nem foi ao banco).
+   */
   private record OfflineWrite(
-      CompletableFuture<GuardedResult> raw, CompletableFuture<GuardedResult> onMain) {
+      CompletableFuture<GuardedResult> raw,
+      CompletableFuture<GuardedResult> onMain,
+      AtomicBoolean claim) {
 
     static OfflineWrite done(GuardedResult result) {
       CompletableFuture<GuardedResult> completed = CompletableFuture.completedFuture(result);
-      return new OfflineWrite(completed, completed);
+      return new OfflineWrite(completed, completed, null);
     }
   }
 
   private OfflineWrite submitOffline(UUID uuid, long delta) {
+    if (closed) {
+      return OfflineWrite.done(new GuardedResult(Outcome.UNAVAILABLE, 0));
+    }
     // Fora da faixa é recusado antes de virar reserva: duas reservas de Long.MAX_VALUE estourariam
     // o saldo interno, e -Long.MIN_VALUE nem existe.
     if (delta == Long.MIN_VALUE || Math.abs(delta) > ledger.maxBalance()) {
@@ -440,7 +547,13 @@ public final class AccountService {
       return OfflineWrite.done(new GuardedResult(outcome, ledger.balance(uuid).orElse(0)));
     }
     long max = ledger.maxBalance();
-    Submitted<GuardedResult> write = db.submit(() -> storage.applyGuarded(uuid, delta, max));
+    AtomicBoolean claim = new AtomicBoolean();
+    Submitted<GuardedResult> write =
+        db.submit(
+            claimed(
+                claim,
+                () -> storage.applyGuarded(uuid, delta, max),
+                new GuardedResult(Outcome.UNAVAILABLE, 0)));
     if (delta < 0) {
       ledger.holdStarted(uuid, -delta, write.seq());
     }
@@ -449,6 +562,7 @@ public final class AccountService {
         .future()
         .whenCompleteAsync(
             (result, error) -> {
+              // Abandonada (UNAVAILABLE) conta como não aplicada: a reserva é devolvida.
               boolean applied = error == null && result.outcome() == Outcome.OK;
               long now = clock.getAsLong();
               if (delta < 0) {
@@ -463,6 +577,6 @@ public final class AccountService {
               }
             },
             mainThread);
-    return new OfflineWrite(write.future(), out);
+    return new OfflineWrite(write.future(), out, claim);
   }
 }

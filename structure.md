@@ -1,7 +1,7 @@
 # dreamCoinSystem — Estrutura do código-fonte
 
 > Mapa para localizar arquivos sem varrer a árvore inteira. Regenerar quando a arquitetura mudar.
-> Estado: PR 1 (`feature/core-storage`).
+> Estado: PR 2 (`feature/vault-economy`).
 
 ```
 dreamCoinSystem/
@@ -38,6 +38,9 @@ dreamCoinSystem/
     │   │   ├── config/
     │   │   │   ├── PluginConfig.java            # config.yml validado (quantias como no jogo)
     │   │   │   └── Messages.java                # messages.yml em MiniMessage + nomes das moedas
+    │   │   ├── vault/
+    │   │   │   ├── VaultBridge.java             # Vault por UUID, sem Bukkit: cache ou banco esperando
+    │   │   │   └── DreamEconomy.java            # implements Economy: nome/jogador → UUID, main thread
     │   │   └── command/
     │   │       └── BalanceCommand.java          # /saldo [jogador]
     │   └── resources/
@@ -46,6 +49,7 @@ dreamCoinSystem/
         ├── money/                           # Money, Parser (exemplos do pedido), Formatter, VaultAmounts
         ├── account/                         # AccountLedger (puro) e AccountService (SQLite real)
         ├── storage/SqliteStorageTest.java   # deltas, guarda, dois "servidores" no mesmo banco
+        ├── vault/VaultBridgeTest.java       # arredondamento, online × offline, janela de login
         ├── config/PluginConfigTest.java
         └── ResourcesTest.java               # sem comandos do Essentials; chaves do messages.yml
 ```

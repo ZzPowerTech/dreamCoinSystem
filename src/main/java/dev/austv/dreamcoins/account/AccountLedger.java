@@ -53,7 +53,12 @@ public final class AccountLedger {
     INSUFFICIENT,
     EXCEEDS_MAX,
     /** Há retirada externa aguardando resposta e a operação depende de saber o saldo exato. */
-    BUSY
+    BUSY,
+    /**
+     * Nada foi feito: o serviço está desligado, ou o banco travou e a operação foi abandonada antes
+     * de rodar. Nunca vem do ledger — é o {@code AccountService} que responde assim.
+     */
+    UNAVAILABLE
   }
 
   /** Alteração de saldo ainda não gravada. */
@@ -315,7 +320,7 @@ public final class AccountLedger {
   }
 
   /**
-   * Retira <b>todo</b> pendente, mesmo de contas com flush em voo. Só para o desligamento, depois de
+   * Retira <b>todo</b> pendente, mesmo de contas com flush em voo. Só no desligamento, depois de
    * a fila do banco esvaziar e os resultados dos voos terem sido aplicados.
    */
   public List<Delta> takeAllPending() {
@@ -501,7 +506,7 @@ public final class AccountLedger {
   }
 
   /**
-   * Tira do cache as contas offline que ficaram quites sem passar por um flush — o pendente voltou a
+   * Tira do cache as contas offline que ficaram quites sem passar por um flush — o pendente volta a
    * zero por uma mutação depois do quit, então nenhum {@link #flushCompleted} vai despejá-las.
    */
   public void evictIdleOffline(long nowMillis) {

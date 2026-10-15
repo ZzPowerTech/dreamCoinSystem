@@ -29,3 +29,30 @@ plugin ainda não foi ao ar), e um `.db` antigo faz todo login ser recusado.
     com o jogador online num deles: em até 10 s o `/saldo` mostra +1 prata.
 
 Mudar saldo ainda exige o banco nesta fase — `/moedas give` chega no PR 3.
+
+## PR 2 — provedor do Vault
+
+Preparação: Vault + Essentials (com a economia dele) + uma loja que use Vault (ShopGUIPlus ou
+similar) no servidor local.
+
+1. **Provedor ativo.** Suba o servidor. `/vault-info` mostra `Economy: dreamCoinSystem`. Sem aviso
+   SEVERE de "outro provedor de economia".
+2. **⚠ Concorrente.** Remova temporariamente o `depend`/prioridade (ou instale um plugin que
+   registre economia com `Highest`): o console mostra o SEVERE nomeando o outro plugin.
+3. **Compra.** Com saldo de 20 prata (`UPDATE dc_accounts SET balance = 2000 …` com o servidor
+   parado, até o PR 3 trazer `/moedas give`), compre um item de preço `12.50`. `/saldo` →
+   `7 prata e 50 bronze`.
+4. **Venda.** Venda um item de preço `0.015`: entra 1 bronze (depósito arredonda para baixo).
+5. **Saldo insuficiente.** Tente comprar algo acima do saldo: a loja recusa e o saldo não muda.
+6. **⚠ Essentials.** Os comandos de economia do EssentialsX (`/eco`, `/pay`, `/balance`) usam a
+   economia **interna** dele, não o Vault. Confirme que estão em `disabled-commands` no
+   `config.yml` do Essentials; senão haverá duas moedas paralelas.
+7. **⚠ Jogador offline.** Com o jogador desconectado, pague-o por um plugin que use o Vault
+   (ex.: venda no leilão, comando do plugin de loja): o banco recebe +200
+   bronze em até alguns ms, sem travar o servidor; ao entrar, `/saldo` mostra o valor.
+8. **⚠ Formatação.** Mensagens de lojas que usam `Economy#format` mostram `12 prata e 50 bronze`.
+9. **⚠ Cada loja usa o dreamCoinSystem.** Para cada plugin de loja/leilão instalado, faça uma
+   compra e confira o `/saldo`. Loja que habilitou antes de nós pode ter guardado outro provedor.
+10. **⚠ Banco travado.** Com MySQL, derrube o banco e faça uma venda para um jogador offline: a
+    loja recebe falha em ~5 s, o console avisa "abandonada sem efeito", e vendas seguintes falham
+    **na hora** (disjuntor) sem travar o servidor. Religue o banco: tudo volta a funcionar.

@@ -22,6 +22,9 @@ public final class VaultAmounts {
   /** Casas decimais anunciadas ao Vault. */
   public static final int FRACTIONAL_DIGITS = 2;
 
+  /** Casas em que o valor recebido é arredondado antes da conversão, para descartar ruído. */
+  private static final int NOISE_DIGITS = 8;
+
   private VaultAmounts() {}
 
   /** Para depósito: fração de bronze é descartada. Vazio se negativo, NaN, infinito ou enorme. */
@@ -46,6 +49,12 @@ public final class VaultAmounts {
     try {
       return OptionalLong.of(
           BigDecimal.valueOf(amount)
+              // Ruído de ponto flutuante primeiro: lojas calculam preço × quantidade em double, e
+              // 0.1 + 0.2 = 0.30000000000000004 subiria para 31 bronze, enquanto 0.57 * 100 =
+              // 56.99999999999999 desceria para 5699 — sempre contra o jogador. Oito casas
+              // separam o ruído (~1e-14) da fração real de bronze, que continua no floor/ceil:
+              // 0.005 segue valendo zero.
+              .setScale(NOISE_DIGITS, RoundingMode.HALF_EVEN)
               .movePointRight(FRACTIONAL_DIGITS)
               .setScale(0, mode)
               .longValueExact());

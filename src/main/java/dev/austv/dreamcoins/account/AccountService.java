@@ -153,7 +153,7 @@ public final class AccountService {
   }
 
   /**
-   * Periódico: grava os pendentes (inclusive os que voltaram de um flush falho) das contas sem flush
+   * Periódico: grava os pendentes (inclusive os que voltaram de um flush falho) de contas sem flush
    * em voo, e despeja as contas offline que ficaram quites sem precisar de flush.
    */
   public void flushAll() {

@@ -315,7 +315,7 @@ public final class AccountLedger {
   }
 
   /**
-   * Retira <b>todo</b> pendente, mesmo de contas com flush em voo. Só para o desligamento, depois de
+   * Retira <b>todo</b> pendente, mesmo de contas com flush em voo. Só no desligamento, depois de
    * a fila do banco esvaziar e os resultados dos voos terem sido aplicados.
    */
   public List<Delta> takeAllPending() {
@@ -501,7 +501,7 @@ public final class AccountLedger {
   }
 
   /**
-   * Tira do cache as contas offline que ficaram quites sem passar por um flush — o pendente voltou a
+   * Tira do cache as contas offline que ficaram quites sem passar por um flush — o pendente volta a
    * zero por uma mutação depois do quit, então nenhum {@link #flushCompleted} vai despejá-las.
    */
   public void evictIdleOffline(long nowMillis) {

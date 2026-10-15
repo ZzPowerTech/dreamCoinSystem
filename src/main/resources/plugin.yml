@@ -11,6 +11,10 @@ commands:
   saldo:
     description: Mostra o seu saldo ou o de outro jogador.
     usage: /saldo [jogador]
+  moedas:
+    description: Administração das moedas (dar, tirar, definir, recarregar).
+    usage: /moedas <give|take|set> <jogador> <quantia> | /moedas reload
+    aliases: [dreamcoins]
 
 permissions:
   dreamcoins.balance:
@@ -18,4 +22,7 @@ permissions:
     default: true
   dreamcoins.balance.others:
     description: Ver o saldo de outros jogadores.
+    default: op
+  dreamcoins.admin:
+    description: /moedas give, take, set e reload.
     default: op

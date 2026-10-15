@@ -2,6 +2,7 @@ package dev.austv.dreamcoins;
 
 import dev.austv.dreamcoins.account.AccountListener;
 import dev.austv.dreamcoins.account.AccountService;
+import dev.austv.dreamcoins.command.AdminCommand;
 import dev.austv.dreamcoins.command.BalanceCommand;
 import dev.austv.dreamcoins.config.Messages;
 import dev.austv.dreamcoins.config.PluginConfig;
@@ -65,6 +66,9 @@ public final class DreamCoins extends JavaPlugin {
     BalanceCommand balance = new BalanceCommand(accounts, messages, getLogger());
     Objects.requireNonNull(getCommand("saldo")).setExecutor(balance);
     Objects.requireNonNull(getCommand("saldo")).setTabCompleter(balance);
+    AdminCommand admin = new AdminCommand(accounts, messages, getLogger(), this::reload);
+    Objects.requireNonNull(getCommand("moedas")).setExecutor(admin);
+    Objects.requireNonNull(getCommand("moedas")).setTabCompleter(admin);
 
     scheduleTasks();
     String backend = config.storageType().name().toLowerCase(Locale.ROOT);
@@ -76,6 +80,30 @@ public final class DreamCoins extends JavaPlugin {
     if (accounts != null) {
       accounts.shutdown();
     }
+  }
+
+  /**
+   * {@code /moedas reload}: relê config e mensagens e aplica o que dá para aplicar a quente — saldo
+   * inicial e teto. Banco e intervalos das tarefas exigem reiniciar (trocar o banco com contas no
+   * cache e deltas em voo seria pedir para perder dinheiro).
+   *
+   * @return {@code true} se alguma mudança só vale depois de reiniciar
+   */
+  public boolean reload() {
+    reloadConfig();
+    PluginConfig fresh = PluginConfig.from(getConfig(), message -> getLogger().warning(message));
+    messages.reload();
+    accounts.configure(fresh.startingBalance(), fresh.maxBalance());
+    boolean needsRestart =
+        fresh.storageType() != config.storageType()
+            || !fresh.sqliteFile().equals(config.sqliteFile())
+            || !fresh.mysql().equals(config.mysql())
+            || fresh.flushIntervalSeconds() != config.flushIntervalSeconds()
+            || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds();
+    if (!needsRestart) {
+      config = fresh;
+    }
+    return needsRestart;
   }
 
   public AccountService accounts() {

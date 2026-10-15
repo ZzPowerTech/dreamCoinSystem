@@ -432,7 +432,7 @@ class AccountServiceTest {
     assertEquals(OptionalLong.of(100), service.balance(bob));
   }
 
-  /** Re-revisão do PR #1 (C1): dois flushes da mesma conta em voo deixavam o piso criar dinheiro. */
+  /** Re-revisão do PR #1 (C1): dois flushes da mesma conta em voo criavam dinheiro pelo piso. */
   @Test
   void failedCreditFollowedByADebitFlushCannotCreateMoney() throws Exception {
     login(alice, "alice"); // 100

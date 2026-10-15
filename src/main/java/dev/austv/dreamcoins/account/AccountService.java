@@ -306,6 +306,17 @@ public final class AccountService {
         db.submit(() -> storage.findByName(name)).future(), found -> found.map(this::view));
   }
 
+  /**
+   * Saldo de qualquer conta, completando na main thread: do cache na hora, ou lido do banco. Vazio
+   * se a conta não existe.
+   */
+  public CompletableFuture<OptionalLong> readBalance(UUID uuid) {
+    if (ledger.contains(uuid)) {
+      return CompletableFuture.completedFuture(ledger.balance(uuid));
+    }
+    return onMain(db.submit(() -> storage.balance(uuid)).future(), Function.identity());
+  }
+
   private AccountView view(StoredAccount stored) {
     long balance = ledger.balance(stored.uuid()).orElse(stored.balance());
     return new AccountView(stored.uuid(), stored.name(), balance);

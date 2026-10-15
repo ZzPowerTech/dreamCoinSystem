@@ -99,13 +99,16 @@ public final class DreamCoins extends JavaPlugin {
     reloadConfig();
     PluginConfig fresh = PluginConfig.from(getConfig(), message -> getLogger().warning(message));
     messages.reload();
+    // Saldo inicial e teto valem a quente mesmo quando outra parte pede reinício; o campo config
+    // só é trocado sem reinício porque guarda o que as tarefas e o Vault estão usando de fato.
     accounts.configure(fresh.startingBalance(), fresh.maxBalance());
     boolean needsRestart =
         fresh.storageType() != config.storageType()
             || !fresh.sqliteFile().equals(config.sqliteFile())
             || !fresh.mysql().equals(config.mysql())
             || fresh.flushIntervalSeconds() != config.flushIntervalSeconds()
-            || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds();
+            || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds()
+            || fresh.vaultTimeoutMillis() != config.vaultTimeoutMillis();
     if (!needsRestart) {
       config = fresh;
     }

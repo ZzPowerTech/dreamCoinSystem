@@ -54,7 +54,7 @@ admin:
   give: "<green>Adicionado <white><amount></white> a <white><player></white>. Saldo: <yellow><balance></yellow>"
   take: "<green>Removido <white><amount></white> de <white><player></white>. Saldo: <yellow><balance></yellow>"
   set: "<green>Saldo de <white><player></white> definido em <yellow><balance></yellow>."
-  set-drift: "<yellow>O saldo de <white><player></white> mudou durante a operação: agora é <white><balance></white> (pedido: <amount>)."
+  set-drift: "<yellow>O saldo de <white><player></white> pode ter mudado durante a operação: agora é <white><balance></white> (pedido: <amount>). Confira."
   insufficient: "<red><white><player></white> tem só <white><balance></white>."
   exceeds-max: "<red>Passaria do saldo máximo (<white><max></white>)."
   busy: "<red>A conta de <white><player></white> tem uma retirada em andamento. Tente de novo em instantes."

@@ -109,7 +109,10 @@ public final class AdminCommand implements TabExecutor {
         .whenComplete(
             (ignored, error) -> {
               if (error != null) {
-                logger.log(Level.WARNING, "/moedas " + sub + " " + name + " falhou", error);
+                logger.log(
+                    Level.WARNING,
+                    "/moedas " + sub + " " + name + " de " + sender.getName() + " falhou",
+                    error);
                 messages.send(sender, "errors.database");
               }
             });

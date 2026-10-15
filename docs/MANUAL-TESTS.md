@@ -29,3 +29,22 @@ plugin ainda não foi ao ar), e um `.db` antigo faz todo login ser recusado.
     com o jogador online num deles: em até 10 s o `/saldo` mostra +1 prata.
 
 Mudar saldo ainda exige o banco nesta fase — `/moedas give` chega no PR 3.
+
+## PR 2 — provedor do Vault
+
+Preparação: Vault + Essentials (com a economia dele) + uma loja que use Vault (ShopGUIPlus ou
+similar) no servidor local.
+
+1. **Provedor ativo.** Suba o servidor. `/vault-info` mostra `Economy: dreamCoinSystem`. Sem aviso
+   SEVERE de "outro provedor de economia".
+2. **⚠ Concorrente.** Remova temporariamente o `depend`/prioridade (ou instale um plugin que
+   registre economia com `Highest`): o console mostra o SEVERE nomeando o outro plugin.
+3. **Compra.** Com saldo de 20 prata (`UPDATE dc_accounts SET balance = 2000 …` com o servidor
+   parado, até o PR 3 trazer `/moedas give`), compre um item de preço `12.50`. `/saldo` →
+   `7 prata e 50 bronze`.
+4. **Venda.** Venda um item de preço `0.015`: entra 1 bronze (depósito arredonda para baixo).
+5. **Saldo insuficiente.** Tente comprar algo acima do saldo: a loja recusa e o saldo não muda.
+6. **`/eco` do Essentials** (se ativo): `/eco give <jogador> 1` usa o Vault → +1 prata.
+7. **⚠ Jogador offline.** Com o jogador desconectado, `/eco give <nome> 2`: o banco recebe +200
+   bronze em até alguns ms, sem travar o servidor; ao entrar, `/saldo` mostra o valor.
+8. **⚠ Formatação.** Mensagens de lojas que usam `Economy#format` mostram `12 prata e 50 bronze`.

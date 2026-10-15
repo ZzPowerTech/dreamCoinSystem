@@ -71,9 +71,37 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 
 ## Estado atual
 
-**PR 1 (`feature/core-storage`) — mergeado ([#1](https://github.com/ZzPowerTech/dreamCoinSystem/pull/1)):** núcleo puro de moedas, `AccountLedger` +
-`AccountService`, SQLite/MySQL por delta, conta criada no pré-login, `/saldo`, CI. Próximo: PR 2
-(`feature/vault-economy`).
+**PR 1 (`feature/core-storage`) — mergeado ([#1](https://github.com/ZzPowerTech/dreamCoinSystem/pull/1)):**
+núcleo puro de moedas, `AccountLedger` + `AccountService`, SQLite/MySQL por delta, conta criada no
+pré-login, `/saldo`, CI.
+
+**PR 2 (`feature/vault-economy`) — atual:** provedor de Economy do Vault (`vault/`). Próximo: PR 3
+(`feature/admin-commands`).
+
+### Decisões de design do PR 2
+
+- **`VaultBridge` sem Bukkit, `DreamEconomy` casca fina.** A lógica (arredondamento, cache ×
+  banco, mapeamento de `Outcome` para `EconomyResponse`) é testada contra SQLite real; o adaptador
+  só traduz jogador/nome para UUID e garante a main thread.
+- **Conta offline: a main thread espera o banco.** A API do Vault é síncrona e quem chama precisa
+  da resposta (a loja entrega o item ou não). A escrita passa pelo mesmo `submitOffline` do
+  `applyOffline` — reserva, lápide e órfãos valem igual — e o que se espera é o futuro **cru** da
+  thread do banco: esperar o que completa na main thread travaria. A thread do banco nunca espera a
+  main, então não há impasse. Timeout em `vault.offline-timeout-millis` (5 s).
+- **Timeout do banco é resultado incerto**, e o log diz isso: a escrita pode ser aplicada depois da
+  resposta de falha. É o único caso em que o Vault pode mentir, e só com o banco travado.
+- **Chamada assíncrona de outro plugin vai para a main thread** (`callSyncMethod`) e é esperada.
+  No timeout a tarefa é **cancelada**; se ela já começou, espera-se o resultado real. Responder
+  falha com a tarefa ainda na fila seria o mesmo resultado incerto, sem necessidade.
+- **`has` arredonda para cima, como saque**: "tem 0.011?" só com 2 bronze. Valor ≤ 0 é sempre
+  verdadeiro (se a conta existe).
+- **Mundo é ignorado e bancos não existem** (`NOT_IMPLEMENTED`). A unidade anunciada é a prata
+  (`currencyNameSingular`), coerente com `fractionalDigits() = 2`.
+- **`createPlayerAccount(String)` só cria para jogador online** — um nome sozinho não identifica a
+  conta. A variante com `OfflinePlayer` cria pelo UUID, sem contar como login (`last_seen` 0), para
+  não roubar um nome reaproveitado.
+- **Provedor concorrente é aviso SEVERE no primeiro tick**, depois de todo plugin subir: o
+  Essentials pode registrar a economia dele depois de nós.
 
 ### Decisões de design do PR 1
 
@@ -129,9 +157,9 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 - **`onMain` em vez de `thenApplyAsync(fn, main)`.** O `thenApplyAsync` completa a *falha* na
   thread que falhou (a do banco), e o callback do comando rodaria fora da main thread justamente no
   caminho de erro.
-- **Flush com piso em zero no SQL** (`CASE WHEN balance + ? < 0 THEN 0`): o cache já validou; o
-  piso só protege de escrita concorrente de outro servidor no MySQL. A escrita offline usa guarda de
-  verdade (`WHERE balance + ? >= 0 AND balance + ? <= max`) e devolve o motivo da recusa.
+- **Flush com guarda e piso explícito:** `UPDATE … WHERE balance + ? >= 0`; o que a guarda recusa
+  é zerado à parte e devolvido como "não aplicado" (ver o log SEVERE acima). A escrita offline usa
+  guarda completa (`WHERE balance + ? >= 0 AND balance + ? <= max`) e devolve o motivo da recusa.
 - **`set` vira delta** em relação ao que o cache enxerga, para não apagar escrita de outro servidor
   ainda não sincronizada.
 - **Busca por nome usa a comparação do dialeto** (`COLLATE NOCASE` / collation do MySQL) para o

@@ -9,7 +9,7 @@ Sprint única de 1 semana (padrão AusTV/plugins), cinco PRs em sequência.
 |---|---|---|---|---|
 | 0 | `main` | Bootstrap: CLAUDE.md, structure.md, specs | — | ✅ |
 | 1 | `feature/core-storage` | Scaffold Maven, núcleo puro, Storage + AccountService, conta no login, `/saldo`, CI | COIN-01..06, STO-01..05, CMD-01 | ✅ mergeado (#1) |
-| 2 | `feature/vault-economy` | `DreamEconomy` + registro Highest + aviso de provedor concorrente | VLT-01..05 | ⏳ |
+| 2 | `feature/vault-economy` | `DreamEconomy` + registro Highest + aviso de provedor concorrente | VLT-01..05 | 🔄 PR aberto |
 | 3 | `feature/admin-commands` | `/moedas give\|take\|set\|reload` online e offline | ADM-01..04 | ⏳ |
 | 4 | `feature/pay-command` | `/pagar` + `PaymentPolicy` + confirmação + cooldown | PAY-01..09 | ⏳ |
 | 5 | `feature/placeholders` | `DreamCoinsExpansion` | PH-01..03 | ⏳ |

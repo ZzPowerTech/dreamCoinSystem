@@ -41,6 +41,12 @@ class ResourcesTest {
     }
   }
 
+  /** O Vault é a API principal: sem o depend o plugin poderia subir antes dele e não registrar. */
+  @Test
+  void dependsOnVault() throws Exception {
+    assertTrue(load("plugin.yml").getStringList("depend").contains("Vault"));
+  }
+
   /** Toda chave que o código usa existe no messages.yml do jar. */
   @ParameterizedTest
   @ValueSource(

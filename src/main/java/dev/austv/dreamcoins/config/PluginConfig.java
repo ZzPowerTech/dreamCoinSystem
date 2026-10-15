@@ -19,7 +19,8 @@ public record PluginConfig(
     long startingBalance,
     long maxBalance,
     int flushIntervalSeconds,
-    int resyncIntervalSeconds) {
+    int resyncIntervalSeconds,
+    int vaultTimeoutMillis) {
 
   /**
    * Teto absoluto do saldo, em bronze (9.999.999.999 ouro, 999 prata e 99 bronze). O Vault recebe
@@ -70,7 +71,8 @@ public record PluginConfig(
         starting,
         max,
         positive(root, "accounts.flush-interval-seconds", 10, warn),
-        positive(root, "accounts.resync-interval-seconds", 30, warn));
+        positive(root, "accounts.resync-interval-seconds", 30, warn),
+        positive(root, "vault.offline-timeout-millis", 5000, warn));
   }
 
   private static long money(

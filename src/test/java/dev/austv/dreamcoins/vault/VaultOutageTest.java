@@ -34,9 +34,9 @@ import org.junit.jupiter.api.io.TempDir;
 /** Re-revisão do PR #2: uma queda prolongada não pode congelar a main thread a cada chamada. */
 class VaultOutageTest {
 
-  /** Simula o banco fora: cada operação leva {@code FAIL_MILLIS} (o timeout de conexão) e falha. */
+  /** Simula o banco fora: cada operação leva {@code failMillis} (o timeout de conexão) e falha. */
   private static final class DownableStorage implements Storage {
-    static final long FAIL_MILLIS = 300;
+    volatile long failMillis = 300;
     private final SqliteStorage delegate;
     volatile boolean down;
 
@@ -47,7 +47,7 @@ class VaultOutageTest {
     private void maybeFail() throws SQLException {
       if (down) {
         try {
-          Thread.sleep(FAIL_MILLIS);
+          Thread.sleep(failMillis);
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
         }
@@ -206,5 +206,16 @@ class VaultOutageTest {
     assertEquals(ResponseType.FAILURE, vault.deposit(bob, 1.00).type);
     long elapsed = millisOf(() -> assertEquals(0.0, vault.balance(bob)));
     assertTrue(elapsed < 50, "leitura com disjuntor aberto levou " + elapsed + " ms");
+  }
+
+  /** Falha mais rápida que o timeout do Vault (conexão 3 s × Vault 5 s): só a falha abre. */
+  @Test
+  void failureFasterThanTheVaultTimeoutStillOpensTheBreaker() throws Exception {
+    storage.failMillis = 150;
+    storage.down = true;
+    assertEquals(ResponseType.FAILURE, vault.withdraw(bob, 1.00).type);
+    long elapsed =
+        millisOf(() -> assertEquals(ResponseType.FAILURE, vault.withdraw(bob, 1.00).type));
+    assertTrue(elapsed < 50, "sem abrir na falha, cada chamada esperaria a conexão: " + elapsed);
   }
 }

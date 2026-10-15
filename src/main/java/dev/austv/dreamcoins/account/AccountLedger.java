@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * O cache de saldos e a contabilidade do que ainda não chegou ao banco.
@@ -74,6 +75,8 @@ public final class AccountLedger {
   private record Tombstone(long seq, long recordedAtMillis) {}
 
   private static final class Entry {
+    final UUID uuid;
+    final Map<UUID, Long> mirror;
     String name;
     long balance;
     long pending;
@@ -84,12 +87,31 @@ public final class AccountLedger {
     /** Reservas que esta entrada já descontou do saldo: sequência → quanto foi descontado. */
     final Map<Long, Long> countedHolds = new HashMap<>(1);
 
+    Entry(UUID uuid, Map<UUID, Long> mirror) {
+      this.uuid = uuid;
+      this.mirror = mirror;
+    }
+
+    /** Única escrita do saldo: publica no espelho junto (cortado no zero, como a exibição). */
+    void setBalance(long value) {
+      balance = value;
+      mirror.put(uuid, Math.max(0, value));
+    }
+
     boolean idle() {
       return pending == 0 && inFlight.isEmpty();
     }
   }
 
   private final Map<UUID, Entry> entries = new HashMap<>();
+
+  /**
+   * Espelho somente-leitura dos saldos do cache, para quem lê fora da main thread (placeholders do
+   * TAB e de scoreboards, {@code getBalance} assíncrono do Vault). Só o {@link Entry#setBalance}
+   * escreve nele, e toda alteração de saldo passa por ali — é o que impede o espelho de ficar para
+   * trás num caminho esquecido.
+   */
+  private final Map<UUID, Long> mirror = new ConcurrentHashMap<>();
 
   /**
    * Escritas externas que terminaram com a conta fora do cache. Cobrem a janela entre o pré-login
@@ -136,7 +158,7 @@ public final class AccountLedger {
     }
     tombstones.remove(uuid);
 
-    Entry entry = new Entry();
+    Entry entry = new Entry(uuid, mirror);
     entry.name = name;
     entry.balance = dbBalance;
     entry.observedSeq = seq;
@@ -148,7 +170,7 @@ public final class AccountLedger {
         }
       }
     }
-    entry.balance = deductHolds(uuid, entry, entry.balance, seq);
+    entry.setBalance(deductHolds(uuid, entry, entry.balance, seq));
     entries.put(uuid, entry);
     return true;
   }
@@ -183,6 +205,7 @@ public final class AccountLedger {
       return;
     }
     entries.remove(uuid);
+    mirror.remove(uuid);
     if (entry.lastWriteSeq > 0) {
       tombstones.put(uuid, new Tombstone(entry.lastWriteSeq, nowMillis));
     }
@@ -199,6 +222,16 @@ public final class AccountLedger {
   public OptionalLong balance(UUID uuid) {
     Entry entry = entries.get(uuid);
     return entry == null ? OptionalLong.empty() : OptionalLong.of(Math.max(0, entry.balance));
+  }
+
+  /**
+   * O saldo exibível de uma conta do cache, lido do espelho. <b>Pode ser chamado de qualquer
+   * thread</b>; o valor pode estar um instante atrás da main thread, o que serve para exibir e nunca
+   * para decidir um pagamento.
+   */
+  public OptionalLong snapshot(UUID uuid) {
+    Long value = mirror.get(uuid);
+    return value == null ? OptionalLong.empty() : OptionalLong.of(value);
   }
 
   public Optional<String> name(UUID uuid) {
@@ -294,7 +327,7 @@ public final class AccountLedger {
   }
 
   private static void apply(Entry entry, long delta) {
-    entry.balance += delta;
+    entry.setBalance(entry.balance + delta);
     entry.pending += delta;
   }
 
@@ -415,7 +448,7 @@ public final class AccountLedger {
     }
     entry.lastWriteSeq = Math.max(entry.lastWriteSeq, seq);
     if (entry.observedSeq < seq) {
-      entry.balance += amount;
+      entry.setBalance(entry.balance + amount);
     }
   }
 
@@ -451,7 +484,7 @@ public final class AccountLedger {
     }
     Long deducted = entry.countedHolds.remove(seq);
     if (deducted != null && !applied) {
-      entry.balance += deducted;
+      entry.setBalance(entry.balance + deducted);
     }
   }
 
@@ -488,7 +521,7 @@ public final class AccountLedger {
         notYetInDb += flight.amount();
       }
     }
-    entry.balance = deductHolds(uuid, entry, dbBalance + notYetInDb, seq);
+    entry.setBalance(deductHolds(uuid, entry, dbBalance + notYetInDb, seq));
     entry.observedSeq = seq;
   }
 

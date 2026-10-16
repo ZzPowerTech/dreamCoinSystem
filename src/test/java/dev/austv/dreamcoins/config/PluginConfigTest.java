@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.austv.dreamcoins.money.Money;
+import dev.austv.dreamcoins.payment.PaymentPolicy;
 import dev.austv.dreamcoins.storage.StorageType;
 import java.util.ArrayList;
 import java.util.List;
@@ -96,6 +97,44 @@ class PluginConfigTest {
               max-balance: "10 ouro"
             """);
     assertEquals(Money.of(10, 0, 0).totalBronze(), config.startingBalance());
+    assertEquals(1, warnings.size());
+  }
+
+  @Test
+  void paymentDefaults() throws Exception {
+    PaymentPolicy.Rules rules = parse("").payments();
+    assertEquals(new PaymentPolicy.Rules(1, 0, 3_000, 1_000_000, 30_000, true), rules);
+  }
+
+  @Test
+  void paymentRulesFromConfig() throws Exception {
+    PaymentPolicy.Rules rules =
+        parse(
+                """
+                payments:
+                  min-amount: "1 prata"
+                  max-amount: "50 ouro"
+                  cooldown-seconds: 0
+                  confirm-above: "0"
+                  confirm-timeout-seconds: 10
+                  allow-offline: false
+                """)
+            .payments();
+    assertEquals(new PaymentPolicy.Rules(100, 5_000_000, 0, 0, 10_000, false), rules);
+    assertTrue(warnings.isEmpty());
+  }
+
+  @Test
+  void paymentMaxBelowMinIsIgnored() throws Exception {
+    PaymentPolicy.Rules rules =
+        parse(
+                """
+                payments:
+                  min-amount: "10 prata"
+                  max-amount: "1 prata"
+                """)
+            .payments();
+    assertEquals(0, rules.maxAmount());
     assertEquals(1, warnings.size());
   }
 

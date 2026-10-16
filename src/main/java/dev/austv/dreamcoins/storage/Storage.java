@@ -1,6 +1,7 @@
 package dev.austv.dreamcoins.storage;
 
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
+import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import java.sql.SQLException;
 import java.util.Collection;
 import java.util.List;
@@ -55,6 +56,16 @@ public interface Storage extends AutoCloseable {
    * entre 0 e {@code maxBalance}.
    */
   GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance) throws SQLException;
+
+  /**
+   * Débito de {@code from} e crédito de {@code to} numa <b>transação só</b>, os dois com guarda: o
+   * débito só se o saldo de {@code from} no banco cobrir, o crédito só se {@code to} existir e não
+   * passar de {@code maxBalance}. Ou os dois, ou nenhum — não há janela de crash entre eles.
+   *
+   * @return {@code OK}, {@code INSUFFICIENT} (débito recusado), {@code NO_ACCOUNT} ou {@code
+   *     EXCEEDS_MAX} (crédito recusado); recusado, nada muda
+   */
+  Outcome transfer(UUID from, UUID to, long amount, long maxBalance) throws SQLException;
 
   OptionalLong balance(UUID uuid) throws SQLException;
 

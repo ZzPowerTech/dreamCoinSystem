@@ -133,7 +133,7 @@ class AccountLedgerTest {
       UUID other = ids[rnd.nextInt(ids.length)];
       long amount = rnd.nextInt(500);
       seq++;
-      switch (rnd.nextInt(12)) {
+      switch (rnd.nextInt(14)) {
         case 0 -> ledger.loaded(who, "x", rnd.nextInt(2_000), seq, 0);
         case 1 -> ledger.deposit(who, amount);
         case 2 -> ledger.withdraw(who, amount);
@@ -157,6 +157,8 @@ class AccountLedgerTest {
           }
         }
         case 10 -> ledger.markOffline(who, 0);
+        case 11 -> ledger.debitInFlight(who, amount, seq);
+        case 12 -> ledger.debitFinished(who, amount, seq - rnd.nextInt(5), rnd.nextBoolean(), 0);
         default -> ledger.reattach(who, "x");
       }
       for (UUID id : ids) {
@@ -171,6 +173,38 @@ class AccountLedgerTest {
     assertEquals(OptionalLong.of(100), ledger.snapshot(alice));
     ledger.markOffline(alice, 0);
     assertEquals(OptionalLong.empty(), ledger.snapshot(alice));
+  }
+
+  // ---- débito em voo da transferência atômica para offline (PR 4) ----
+
+  @Test
+  void debitInFlightLowersTheBalanceWithoutPendingAndHoldsTheEntry() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    assertEquals(Outcome.OK, ledger.debitInFlight(alice, 60, 5));
+    assertEquals(40, balance(alice));
+    assertEquals(List.of(), ledger.takePending(), "o banco recebe o débito pela transferência");
+    ledger.markOffline(alice, 0);
+    assertTrue(ledger.contains(alice), "não sai do cache com débito em voo");
+    ledger.debitFinished(alice, 60, 5, true, 0);
+    assertFalse(ledger.contains(alice));
+  }
+
+  @Test
+  void refusedTransferGivesTheDebitBack() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.debitInFlight(alice, 60, 5);
+    ledger.debitFinished(alice, 60, 5, false, 0);
+    assertEquals(100, balance(alice));
+    assertEquals(List.of(), ledger.takePending());
+    assertEquals(Outcome.INSUFFICIENT, ledger.debitInFlight(alice, 101, 6));
+  }
+
+  @Test
+  void resyncCountsTheDebitInFlight() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.debitInFlight(alice, 60, 5);
+    ledger.resynced(alice, 100, 4); // leitura anterior à transferência
+    assertEquals(40, balance(alice));
   }
 
   // ---- saída do cache: só quando não deve nada ao banco ----

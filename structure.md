@@ -1,7 +1,7 @@
 # dreamCoinSystem — Estrutura do código-fonte
 
 > Mapa para localizar arquivos sem varrer a árvore inteira. Regenerar quando a arquitetura mudar.
-> Estado: PR 5 (`feature/placeholders`).
+> Estado: v1 completa — PRs 1 a 5.
 
 ```
 dreamCoinSystem/
@@ -46,10 +46,14 @@ dreamCoinSystem/
     │   │   │   └── DreamCoinsExpansion.java     # expansão do PlaceholderAPI, lê o espelho
     │   │   ├── admin/
     │   │   │   └── AdminOperations.java         # give/take/set por UUID, sem Bukkit (set offline por delta)
+    │   │   ├── payment/
+    │   │   │   ├── PaymentPolicy.java           # proteções do /pagar como decisão pura
+    │   │   │   └── PaymentService.java          # confirmação, cooldown; transfer no cache ou transferência atômica no banco
     │   │   └── command/
     │   │       ├── BalanceCommand.java          # /saldo [jogador]
     │   │       ├── AdminCommand.java            # /moedas give|take|set|reload
-    │   │       └── AmountArgs.java              # quantia a partir de um índice dos args; chave de erro
+    │   │       ├── AmountArgs.java              # quantia a partir de um índice dos args; chave de erro
+    │   │       └── PayCommand.java              # /pagar <jogador> <quantia> | /pagar confirmar
     │   └── resources/
     │       ├── plugin.yml · config.yml · messages.yml
     └── test/java/dev/austv/dreamcoins/      # JUnit 5, sem servidor
@@ -61,6 +65,7 @@ dreamCoinSystem/
         ├── placeholder/PlaceholderResolverTest.java
         ├── admin/AdminOperationsTest.java   # online/offline, set com drift, BUSY
         ├── command/AmountArgsTest.java
+        ├── payment/                         # PaymentPolicy; PaymentService (exemplos do pedido + fuzz de conservação)
         ├── config/PluginConfigTest.java
         └── ResourcesTest.java               # sem comandos do Essentials; chaves do messages.yml
 ```

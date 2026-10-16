@@ -94,6 +94,12 @@ class AccountServiceTest {
     }
 
     @Override
+    public Outcome transfer(UUID from, UUID to, long amount, long maxBalance)
+        throws SQLException {
+      return delegate.transfer(from, to, amount, maxBalance);
+    }
+
+    @Override
     public GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance)
         throws SQLException {
       return delegate.applyGuarded(uuid, delta, maxBalance);

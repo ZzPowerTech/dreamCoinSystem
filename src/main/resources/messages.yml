@@ -30,9 +30,11 @@ balance:
 
 usage:
   saldo: "<gray>Uso: <white>/saldo [jogador]"
+  pagar: "<gray>Uso: <white>/pagar <jogador> <quantia></white>, ex.: <white>/pagar fox 1 ouro 35 bronze</white>"
 
 errors:
   no-permission: "<red>Você não tem permissão para isso."
+  player-only: "<red>Só jogadores podem usar este comando."
   unknown-player: "<red>Jogador <white><player></white> não encontrado."
   account-loading: "<red>Sua conta ainda está carregando. Tente de novo em instantes."
   database: "<red>Erro ao consultar o banco de dados. Avise a staff."
@@ -71,3 +73,17 @@ notify:
 placeholders:
   # %dreamcoins_highest% quando o jogador não tem moeda nenhuma.
   no-coin: "nenhuma"
+
+pay:
+  paid: "<green>Você pagou <yellow><amount></yellow> a <white><player></white>. Saldo: <yellow><balance></yellow>"
+  received: "<green>Você recebeu <yellow><amount></yellow> de <white><player></white>. Saldo: <yellow><balance></yellow>"
+  confirm: "<yellow>Pagar <white><amount></white> a <white><player></white>? Digite <white>/pagar confirmar</white> em até <seconds> s."
+  self: "<red>Você não pode pagar a si mesmo."
+  below-min: "<red>O mínimo por pagamento é <white><min></white>."
+  above-max: "<red>O máximo por pagamento é <white><max></white>."
+  cooldown: "<red>Espere <white><seconds> s</white> para pagar de novo."
+  offline-not-allowed: "<red><white><player></white> precisa estar online para receber."
+  insufficient: "<red>Saldo insuficiente. Você tem <white><balance></white>."
+  receiver-full: "<red><white><player></white> não pode receber tanto (saldo máximo)."
+  busy: "<red>Sua conta tem uma operação em andamento. Tente de novo em instantes."
+  no-pending: "<red>Você não tem pagamento esperando confirmação."

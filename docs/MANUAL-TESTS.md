@@ -74,6 +74,28 @@ similar) no servidor local.
 7. **reload.** Mude `payments`/mensagens e `accounts.starting-balance`: `/moedas reload` aplica.
    Mude `storage.type`: o reload avisa que precisa reiniciar.
 
+## PR 4 — `/pagar`
+
+Dois jogadores (A e B), A com 2 ouro.
+
+1. **Exemplos do pedido**, com B online e depois offline:
+   `/pagar B 2 prata 1 bronze` · `/pagar B 1 ouro 35 bronze` · `/pagar B 1 ouro` ·
+   `/pagar B 1 ouro 2 prata 3 bronze` · `/pagar B 2 bronze`. Conferir o saldo de A na mensagem
+   (ex.: depois de `1 ouro 35 bronze` sobra `999 prata e 65 bronze`) e o `/saldo` de B.
+2. **Forma compacta e mistura.** `/pagar B 2p 1b`, `/pagar B 1o 35 bronze`.
+3. **Erros.** `/pagar B 3 cobre` → moeda desconhecida; `/pagar <A> 1 ouro` → não pode pagar a si
+   mesmo; acima do saldo → "Saldo insuficiente. Você tem …".
+4. **Confirmação.** `/pagar B 11 ouro` (com saldo) → pede `/pagar confirmar`; sem confirmar nada é
+   debitado; confirmar depois de 30 s → "não tem pagamento esperando".
+5. **Cooldown.** Dois pagamentos em menos de 3 s → "Espere N s".
+6. **Bypass.** Com `dreamcoins.bypass.cooldown` e `dreamcoins.bypass.confirm`, nenhuma das duas
+   travas aparece.
+7. **⚠ Offline com falha.** Com MySQL, derrube o banco e pague B offline: A recebe erro de banco e o
+   saldo de A volta (a transação não foi aplicada); religue o banco e confira os dois saldos.
+8. **⚠ Recebedor no teto.** Reduza `accounts.max-balance` abaixo do saldo de B e `/moedas reload`:
+   pagar B → "não pode receber tanto"; A não perde nada.
+9. **Console.** Cada pagamento concluído aparece como `[pagar] A -> B (...): N bronze`.
+
 ## PR 5 — placeholders
 
 Preparação: PlaceholderAPI instalado; saldo de teste `10 ouro 20 prata 3 bronze`.
@@ -90,3 +112,4 @@ Preparação: PlaceholderAPI instalado; saldo de teste `10 ouro 20 prata 3 bronz
 5. **⚠ Offline.** `/papi parse <jogador offline> %dreamcoins_balance%` → `0 bronze` (placeholders
    leem só o cache, por desenho).
 6. **`/papi reload`.** As placeholders continuam (expansão persistente).
+

@@ -608,4 +608,31 @@ class PaymentServiceTest {
     now.addAndGet(3_000);
     assertEquals(Status.PAID, await(payments.confirm(payer, false)).status());
   }
+
+  /** Re-verificação do PR #4 (I1): o dinheiro recém-recebido ainda pendente no cache conta. */
+  @Test
+  void freshPendingCreditCanBePaidToAnOfflinePlayerRightAway() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    accounts.deposit(payer, 600); // venda de agora: só no cache
+    Result result = pay(fox, TWO_GOLD + 500);
+    assertEquals(Status.PAID, result.status());
+    assertEquals(100, stored(payer));
+    assertEquals(TWO_GOLD + TWO_GOLD + 500, stored(fox));
+  }
+
+  /** Com o crédito do pagador num flush que falha, a recusa é "tente de novo", não "sem saldo". */
+  @Test
+  void databaseRefusalWhileTheCacheHadEnoughIsBusyNotInsufficient() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    accounts.deposit(payer, 600);
+    storage.failNextFlush = true; // o flush do +600, logo antes da transferência, falha
+    Result result = pay(fox, TWO_GOLD + 500);
+    assertEquals(Status.BUSY, result.status());
+    assertEquals(OptionalLong.of(TWO_GOLD + 600), accounts.balance(payer), "nada debitado");
+    assertEquals(Status.PAID, pay(fox, TWO_GOLD + 500).status(), "na segunda tentativa vai");
+  }
 }

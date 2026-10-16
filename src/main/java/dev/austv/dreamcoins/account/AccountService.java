@@ -166,9 +166,9 @@ public final class AccountService {
    * já decide se aquela leitura serve.
    */
   public void quit(UUID uuid) {
-    // Grava todo o pendente num lote só, e não só o de quem saiu: uma transferência entre dois
-    // jogadores online deixa um delta em cada conta, e gravá-los em lotes separados abriria uma
-    // janela em que só o crédito está no banco.
+    // Grava todo o pendente num lote só, não só o de quem saiu: os dois lados de uma transferência
+    // entre online tendem a ir juntos. Não é garantia — conta com flush em voo fica para o próximo
+    // lote; operações no cache são write-behind (ver CLAUDE.md).
     submitFlush(ledger.takePending());
     ledger.markOffline(uuid, clock.getAsLong());
   }
@@ -424,6 +424,10 @@ public final class AccountService {
     if (ledger.balance(from).orElse(0) < amount) {
       return CompletableFuture.completedFuture(Outcome.INSUFFICIENT);
     }
+    // O dinheiro do pagador pode estar só no cache (venda de agora há pouco, ainda pendente): grava
+    // o pendente antes, e a fila FIFO garante que o banco já o tenha quando a transferência rodar.
+    // Seguro mesmo se esse flush falhar — a transferência é guardada e só é recusada.
+    submitFlush(ledger.takePending());
     long max = ledger.maxBalance();
     AtomicBoolean claim = new AtomicBoolean();
     Submitted<Outcome> write =
@@ -453,7 +457,9 @@ public final class AccountService {
               if (error != null) {
                 out.completeExceptionally(error);
               } else {
-                out.complete(outcome);
+                // O cache tinha o suficiente (conferido antes); recusa por saldo no banco é crédito do
+                // pagador ainda a caminho (flush em voo ou falho), não falta de dinheiro.
+                out.complete(outcome == Outcome.INSUFFICIENT ? Outcome.BUSY : outcome);
               }
             },
             mainThread);

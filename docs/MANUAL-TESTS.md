@@ -91,7 +91,7 @@ Dois jogadores (A e B), A com 2 ouro.
 6. **Bypass.** Com `dreamcoins.bypass.cooldown` e `dreamcoins.bypass.confirm`, nenhuma das duas
    travas aparece.
 7. **⚠ Offline com falha.** Com MySQL, derrube o banco e pague B offline: A recebe erro de banco e o
-   saldo de A volta (estorno); religue o banco e confira os dois saldos no banco.
+   saldo de A volta (a transação não foi aplicada); religue o banco e confira os dois saldos.
 8. **⚠ Recebedor no teto.** Reduza `accounts.max-balance` abaixo do saldo de B e `/moedas reload`:
    pagar B → "não pode receber tanto"; A não perde nada.
 9. **Console.** Cada pagamento concluído aparece como `[pagar] A -> B (...): N bronze`.

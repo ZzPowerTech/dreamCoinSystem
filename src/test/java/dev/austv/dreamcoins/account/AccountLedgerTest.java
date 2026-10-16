@@ -116,6 +116,38 @@ class AccountLedgerTest {
     assertEquals(List.of(new Delta(alice, -70)), ledger.takePending());
   }
 
+  // ---- débito em voo da transferência atômica para offline (PR 4) ----
+
+  @Test
+  void debitInFlightLowersTheBalanceWithoutPendingAndHoldsTheEntry() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    assertEquals(Outcome.OK, ledger.debitInFlight(alice, 60, 5));
+    assertEquals(40, balance(alice));
+    assertEquals(List.of(), ledger.takePending(), "o banco recebe o débito pela transferência");
+    ledger.markOffline(alice, 0);
+    assertTrue(ledger.contains(alice), "não sai do cache com débito em voo");
+    ledger.debitFinished(alice, 60, 5, true, 0);
+    assertFalse(ledger.contains(alice));
+  }
+
+  @Test
+  void refusedTransferGivesTheDebitBack() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.debitInFlight(alice, 60, 5);
+    ledger.debitFinished(alice, 60, 5, false, 0);
+    assertEquals(100, balance(alice));
+    assertEquals(List.of(), ledger.takePending());
+    assertEquals(Outcome.INSUFFICIENT, ledger.debitInFlight(alice, 101, 6));
+  }
+
+  @Test
+  void resyncCountsTheDebitInFlight() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    ledger.debitInFlight(alice, 60, 5);
+    ledger.resynced(alice, 100, 4); // leitura anterior à transferência
+    assertEquals(40, balance(alice));
+  }
+
   // ---- saída do cache: só quando não deve nada ao banco ----
 
   @Test

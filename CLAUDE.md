@@ -91,14 +91,30 @@ provedor de Economy do Vault (`vault/`).
   **O saldo fica de fora de propósito**: quem decide se há dinheiro é a transferência; conferir
   antes daria uma resposta que pode estar velha no instante de pagar.
 - **Alvo no cache: `transfer` atômico** — débito e crédito juntos, ou nenhum.
-- **Alvo fora do cache: débito no cache gravado na hora (`flushNow`), crédito pelo
-  `applyOffline`, estorno se o crédito falhar.** A fila do banco é FIFO, então o débito chega antes
-  do crédito: um crash entre os dois perde o pagamento em vez de duplicá-lo. O estorno no cache não
-  respeita o teto (`AccountLedger#refund`) — o dinheiro já era do pagador, e recusar a devolução
-  porque ele recebeu algo no meio-tempo faria o dinheiro sumir. Estorno que falha vai ao console em
-  SEVERE pedindo `/moedas give`.
+- **Alvo fora do cache: uma transação só** (`Storage#transfer`, `AccountService#transferToOffline`):
+  débito guardado do pagador e crédito guardado do alvo juntos, ou nenhum — não há janela de crash.
+  No cache o débito é um **débito em voo** (`AccountLedger#debitInFlight`): o saldo cai na hora, o
+  resync o conta, a conta não sai do cache, e o valor volta ao saldo se a transação for recusada.
+  Não entra no pendente, senão o flush o gravaria de novo. É seguro com flush do pagador em voo: a
+  guarda do débito olha o saldo do **banco**, então se um crédito anterior falhou a transferência
+  inteira é recusada em vez de cortar no piso. A primeira versão (débito pelo flush, crédito pelo
+  `applyOffline`, estorno manual) deixava o crédito no banco com o débito só no cache quando o
+  pagador tinha flush em voo ou o flush falhava — sempre com cooldown 0 ou bypass —, e um crash ali
+  criava o valor do pagamento (revisão do PR #4; testes conferem o banco **antes** do flush seguinte).
+- **Limite de durabilidade (documentado):** operações **no cache** — transferência entre dois
+  online, compras pelo Vault — são *write-behind*: o banco recebe os deltas a cada flush, e um crash
+  duro (kill -9, energia) perde até um intervalo de flush, de qualquer lado. Para diminuir a chance
+  de uma transferência entre online ficar pela metade, o quit grava **todo** o pendente num lote só.
+  A garantia "os dois ou nenhum" contra crash vale para a transferência para offline.
 - **Cooldown conta do pedido, não da conclusão**: um pagamento offline leva um ida-e-volta ao banco,
-  e dois cliques nesse meio passariam os dois. Pagamento que falha desfaz o cooldown.
+  e dois cliques nesse meio passariam os dois. Pagamento que falha desfaz o cooldown — só se ninguém
+  o mudou depois (M1). Relógio monotônico (`nanoTime`): ajuste de NTP para trás não vira "espere
+  3600 s" (M3).
+- **"Alvo offline" é o jogador real**, não o cache (M2): quem acabou de sair ainda está no cache
+  devendo flush, e quem está entrando ainda não; o cache só decide o caminho do dinheiro.
+- **Confirmação recusada por cooldown mantém o pedido** (M4).
+- **Contas criadas por plugin** (`last_seen` 0, Towny/NPC) podem receber `/pagar` pelo nome quando
+  nenhum jogador real tem aquele nome — mesma resolução do `/moedas`. Documentado, não bloqueado.
 - **Confirmação**: um pedido pendente por pagador, com prazo; pedido novo substitui o anterior; sai
   no quit. Ao confirmar, a política roda de novo (cooldown, alvo online/offline).
 - **Fuzz de conservação** em `PaymentServiceTest`: pagamentos aleatórios entre três jogadores que

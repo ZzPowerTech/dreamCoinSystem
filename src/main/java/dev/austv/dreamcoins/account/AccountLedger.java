@@ -226,7 +226,7 @@ public final class AccountLedger {
 
   /**
    * O saldo exibível de uma conta do cache, lido do espelho. <b>Pode ser chamado de qualquer
-   * thread</b>; o valor pode estar um instante atrás da main thread, o que serve para exibir e nunca
+   * thread</b>; o valor pode estar um instante atrás da main thread, o que serve para exibir, nunca
    * para decidir um pagamento.
    */
   public OptionalLong snapshot(UUID uuid) {

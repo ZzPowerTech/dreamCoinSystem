@@ -10,7 +10,7 @@ import org.bukkit.plugin.Plugin;
  * {@code %dreamcoins_<params>%}. Casca fina sobre o {@link PlaceholderResolver}.
  *
  * <p>Lê o saldo pelo <b>espelho</b> do cache ({@link AccountService#snapshot}), porque o TAB e os
- * scoreboards pedem placeholders de threads assíncronas e o cache só pode ser tocado na main thread.
+ * scoreboards pedem placeholders de threads assíncronas e o cache só se toca na main thread.
  * Jogador fora do cache (offline) lê como zero: consultar o banco a cada atualização de scoreboard
  * seria uma consulta por jogador por tick.
  */

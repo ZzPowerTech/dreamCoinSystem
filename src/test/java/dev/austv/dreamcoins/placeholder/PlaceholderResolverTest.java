@@ -66,7 +66,8 @@ class PlaceholderResolverTest {
     assertEquals("0.01", resolver.resolve("balance_vault", OptionalLong.of(1)));
     assertEquals("1000.00", resolver.resolve("balance_vault", OptionalLong.of(100_000)));
     assertEquals(
-        "9999999999999.99", resolver.resolve("balance_vault", OptionalLong.of(999_999_999_999_999L)));
+        "9999999999999.99",
+        resolver.resolve("balance_vault", OptionalLong.of(999_999_999_999_999L)));
   }
 
   @Test

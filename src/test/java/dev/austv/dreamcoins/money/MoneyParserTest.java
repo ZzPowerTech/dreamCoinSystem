@@ -76,6 +76,8 @@ class MoneyParserTest {
     "1.5o,                NOT_INTEGER",
     "ouro,                NOT_A_NUMBER",
     "2,                   MISSING_COIN",
+    "0,                   NOT_POSITIVE",
+    "1.5,                 NOT_INTEGER",
     "1 ouro 5,            MISSING_COIN",
     "2 xyz,               UNKNOWN_COIN",
     "2xyz,                UNKNOWN_COIN",

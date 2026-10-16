@@ -75,8 +75,40 @@ export MAVEN_OPTS="-Djavax.net.ssl.trustStore=$PWD/cacerts-avast.jks -Djavax.net
 núcleo puro de moedas, `AccountLedger` + `AccountService`, SQLite/MySQL por delta, conta criada no
 pré-login, `/saldo`, CI.
 
-**PR 2 (`feature/vault-economy`) — atual:** provedor de Economy do Vault (`vault/`). Próximo: PR 3
-(`feature/admin-commands`).
+**PR 2 (`feature/vault-economy`) — mergeado ([#2](https://github.com/ZzPowerTech/dreamCoinSystem/pull/2)):**
+provedor de Economy do Vault (`vault/`).
+
+**PR 3 (`feature/admin-commands`) — atual:** `/moedas give|take|set|reload` (`admin/`,
+`command/AdminCommand`, `command/AmountArgs`). Próximo: PR 4 (`feature/pay-command`).
+
+### Decisões de design do PR 3
+
+- **`AdminOperations` sem Bukkit**, testado contra SQLite; o comando só faz parse, resolução do
+  alvo e mensagens.
+- **Online e offline pelo mesmo caminho do Vault**: conta no cache pelo cache; fora dele pelo
+  `applyOffline` (reserva na retirada, órfão no crédito).
+- **`take` acima do saldo é recusado**, nunca zera em silêncio — o admin vê quanto o jogador tem.
+- **`set` offline não grava valor absoluto.** Lê o saldo, aplica a diferença por delta e confere o
+  resultado; se outra escrita entrou no meio (Vault, outro servidor), avisa o admin com o saldo real
+  (`drifted`) em vez de dizer "pronto". `set` com reserva pendente devolve `BUSY` (regra do PR 1).
+- **"0" só vale no `set`** (`AmountArgs`, também "0 ouro"); dar, tirar ou pagar zero é erro de
+  digitação. O parser valida o número antes de exigir a moeda: `/moedas give fox 0` diz "maior que
+  zero", não "faltou a moeda".
+- **Toda alteração vai ao console** com autor, alvo, valor e resultado: é dinheiro criado ou
+  destruído por fora da economia, e "quem me deu isto?" vira pergunta de suporte.
+- **Aviso ao jogador online** quando a staff mexe no saldo dele (`notify.*`, desligável com "").
+- **`reload` aplica a quente** saldo inicial, teto e mensagens; banco e intervalos das tarefas
+  pedem reinício (trocar de banco com deltas em voo seria pedir para perder dinheiro).
+- **`switch` de comando sobre `Outcome` precisa cobrir `UNAVAILABLE`**: switch com setas não é
+  obrigado a ser exaustivo, e o caso esquecido vira resposta nenhuma.
+- **Teto vale só para crédito; débito é limitado pelo teto absoluto** (`Money.MAX_TOTAL`), no
+  banco (`AND (? < 0 OR balance + ? <= ?)`) e no pré-check do `applyOffline` (revisão do PR #3).
+  Com `max-balance` reduzido a quente abaixo de saldos existentes, o guard barrava *débitos* e o
+  admin não conseguia tirar dinheiro de quem passou do teto — justamente a remediação depois de um
+  exploit.
+- **`drifted` pode ser falso positivo** (o alvo entrou entre a leitura e a escrita com um callback
+  ainda em voo): o saldo final está certo, por isso o texto diz "pode ter mudado… confira". O erro
+  é sempre do lado seguro.
 
 ### Decisões de design do PR 2
 

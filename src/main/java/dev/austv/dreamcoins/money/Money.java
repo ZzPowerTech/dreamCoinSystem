@@ -16,6 +16,13 @@ public record Money(long totalBronze) implements Comparable<Money> {
 
   public static final Money ZERO = new Money(0);
 
+  /**
+   * Teto absoluto de qualquer saldo, em bronze (9.999.999.999 ouro, 999 prata e 99 bronze): o maior
+   * valor de 15 dígitos, que é o que um {@code double} devolve idêntico ao Vault. O {@code
+   * max-balance} do config só pode ser menor ou igual a este.
+   */
+  public static final long MAX_TOTAL = 999_999_999_999_999L;
+
   public Money {
     if (totalBronze < 0) {
       throw new IllegalArgumentException("Money cannot be negative: " + totalBronze);

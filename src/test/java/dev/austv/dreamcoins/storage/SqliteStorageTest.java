@@ -135,6 +135,13 @@ class SqliteStorageTest {
   }
 
   @Test
+  void guardedDebitIsAllowedAboveTheConfiguredMax() throws Exception {
+    storage.loadOrCreate(alice, "alice", 100);
+    assertEquals(new GuardedResult(Outcome.OK, 90), storage.applyGuarded(alice, -10, 50));
+    assertEquals(Outcome.EXCEEDS_MAX, storage.applyGuarded(alice, 1, 50).outcome());
+  }
+
+  @Test
   void guardedWriteRefusesAndChangesNothing() throws Exception {
     storage.loadOrCreate(alice, "alice", 100);
     assertEquals(Outcome.INSUFFICIENT, storage.applyGuarded(alice, -101, MAX).outcome());

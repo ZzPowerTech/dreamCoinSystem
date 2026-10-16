@@ -97,7 +97,7 @@ public final class PaymentService {
         true)
         .thenApply(
             result -> {
-              // Recusa temporária não apaga o pedido: o jogador espera o cooldown e confirma de novo.
+              // Recusa temporária não apaga o pedido: espera-se o cooldown e confirma-se de novo.
               if (result.status() == Status.COOLDOWN) {
                 pending.putIfAbsent(payer, request);
               }

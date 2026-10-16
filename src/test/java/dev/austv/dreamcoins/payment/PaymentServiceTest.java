@@ -590,7 +590,8 @@ class PaymentServiceTest {
     CompletableFuture<Result> slow = payments.request(payer, fox, "fox", 10, false, false);
     now.addAndGet(5_000);
     login(fox, "fox");
-    assertEquals(Status.PAID, await(payments.request(payer, fox, "fox", 10, false, false)).status());
+    assertEquals(
+        Status.PAID, await(payments.request(payer, fox, "fox", 10, false, false)).status());
     assertEquals(Status.UNAVAILABLE, await(slow).status());
     assertEquals(Status.COOLDOWN, pay(fox, 10).status(), "o cooldown do segundo continua");
   }

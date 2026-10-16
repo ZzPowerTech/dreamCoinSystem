@@ -367,8 +367,8 @@ public final class AccountLedger {
   /**
    * Débito de uma conta do cache que <b>não</b> vai pelo flush: ele é gravado no banco pela
    * operação {@code seq} (a transferência atômica para conta offline), junto do crédito do outro
-   * lado. O saldo cai já, para o jogador não gastar o mesmo dinheiro; o valor fica registrado como em
-   * voo (o resync o conta e a conta não sai do cache) e <b>não</b> entra no pendente — senão o flush
+   * lado. O saldo cai já, para o jogador não gastar o mesmo dinheiro; o valor fica como em
+   * voo (o resync o conta e a conta não sai do cache) e <b>não</b> vai ao pendente — senão o flush
    * o gravaria uma segunda vez.
    */
   public Outcome debitInFlight(UUID uuid, long amount, long seq) {
@@ -387,7 +387,7 @@ public final class AccountLedger {
   }
 
   /**
-   * A operação {@code seq} de um {@link #debitInFlight} terminou. Aplicada: o banco já tem o débito,
+   * A operação {@code seq} de um {@link #debitInFlight} terminou. Aplicada: o banco tem o débito,
    * só sai da lista em voo. Recusada ou com erro: o banco não tem nada, e o valor volta ao saldo —
    * sem passar pelo pendente, porque não há o que gravar.
    */

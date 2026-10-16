@@ -12,7 +12,7 @@ Sprint única de 1 semana (padrão AusTV/plugins), cinco PRs em sequência.
 | 2 | `feature/vault-economy` | `DreamEconomy` + registro Highest + aviso de provedor concorrente | VLT-01..05 | ✅ mergeado (#2) |
 | 3 | `feature/admin-commands` | `/moedas give\|take\|set\|reload` online e offline | ADM-01..04 | 🔄 PR aberto |
 | 4 | `feature/pay-command` | `/pagar` + `PaymentPolicy` + confirmação + cooldown | PAY-01..09 | ⏳ |
-| 5 | `feature/placeholders` | `DreamCoinsExpansion` | PH-01..03 | ⏳ |
+| 5 | `feature/placeholders` | `DreamCoinsExpansion` + espelho de leitura assíncrona | PH-01..03 | 🔄 PR aberto |
 
 ## Definition of Done (todo PR)
 

@@ -81,6 +81,30 @@ provedor de Economy do Vault (`vault/`).
 **PR 3 (`feature/admin-commands`) — atual:** `/moedas give|take|set|reload` (`admin/`,
 `command/AdminCommand`, `command/AmountArgs`). Próximo: PR 4 (`feature/pay-command`).
 
+**PR 5 (`feature/placeholders`) — atual:** `%dreamcoins_*%` (`placeholder/`) e o espelho de
+saldos para leitura fora da main thread.
+
+### Decisões de design do PR 5
+
+- **Espelho de saldos** (`AccountLedger#snapshot`, `ConcurrentHashMap`): o TAB e os scoreboards
+  pedem placeholders de threads assíncronas, e o cache só pode ser tocado na main thread. **Toda
+  escrita de saldo passa por `Entry#setBalance`**, que publica junto; um teste de passeio aleatório
+  por todas as operações do ledger trava isso — um caminho que escrevesse o saldo direto deixaria o
+  espelho para trás sem erro nenhum. O espelho serve para **exibir**, nunca para decidir pagamento.
+- **`getBalance`/`has` assíncronos do Vault** de conta no cache respondem pelo espelho, sem esperar
+  um tick no `callSyncMethod` (menor M4 da revisão do PR #2). Conta fora do cache segue o caminho de
+  sempre.
+- **`PlaceholderResolver` sem PlaceholderAPI nem estado**; a expansão é casca fina. Placeholders:
+  `balance`, `balance_short`, `gold|silver|bronze` (ou `ouro|prata`), `total_<moeda>[_formatted]`,
+  `balance_vault`, `highest` e `has_<quantia>` (`has_1_ouro_50_prata`, `has_1o_50p` →
+  `true`/`false`, para requisitos de menu).
+- **Jogador fora do cache lê como zero**, nunca vazio nem banco: consultar o banco a cada
+  atualização de scoreboard seria uma consulta por jogador por tick, e linha em branco parece
+  defeito. Placeholder desconhecido devolve `null` (o PlaceholderAPI mostra o texto cru).
+- **PlaceholderAPI é opcional** (`softdepend`); sem ele o plugin sobe e avisa.
+- **Falha de flush abre o disjuntor** (menor M1 da re-revisão do PR #2): numa queda, nem a primeira
+  operação offline do Vault paga o timeout de conexão.
+
 ### Decisões de design do PR 3
 
 - **`AdminOperations` sem Bukkit**, testado contra SQLite; o comando só faz parse, resolução do

@@ -1,7 +1,7 @@
 # dreamCoinSystem — Estrutura do código-fonte
 
 > Mapa para localizar arquivos sem varrer a árvore inteira. Regenerar quando a arquitetura mudar.
-> Estado: PR 3 (`feature/admin-commands`).
+> Estado: PR 5 (`feature/placeholders`).
 
 ```
 dreamCoinSystem/
@@ -41,6 +41,9 @@ dreamCoinSystem/
     │   │   ├── vault/
     │   │   │   ├── VaultBridge.java             # Vault por UUID, sem Bukkit: cache ou banco esperando
     │   │   │   └── DreamEconomy.java            # implements Economy: nome/jogador → UUID, main thread
+    │   │   ├── placeholder/
+    │   │   │   ├── PlaceholderResolver.java     # texto de cada %dreamcoins_*%, sem PAPI e sem estado
+    │   │   │   └── DreamCoinsExpansion.java     # expansão do PlaceholderAPI, lê o espelho
     │   │   ├── admin/
     │   │   │   └── AdminOperations.java         # give/take/set por UUID, sem Bukkit (set offline por delta)
     │   │   └── command/
@@ -54,6 +57,8 @@ dreamCoinSystem/
         ├── account/                         # AccountLedger (puro) e AccountService (SQLite real)
         ├── storage/SqliteStorageTest.java   # deltas, guarda, dois "servidores" no mesmo banco
         ├── vault/VaultBridgeTest.java       # arredondamento, online × offline, janela de login
+        ├── vault/VaultOutageTest.java       # disjuntor: queda longa, falha rápida, flush falho
+        ├── placeholder/PlaceholderResolverTest.java
         ├── admin/AdminOperationsTest.java   # online/offline, set com drift, BUSY
         ├── command/AmountArgsTest.java
         ├── config/PluginConfigTest.java

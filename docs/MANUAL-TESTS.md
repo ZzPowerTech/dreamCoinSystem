@@ -73,3 +73,20 @@ similar) no servidor local.
    `/moedas give x 0` → "maior que zero"; `/moedas give x 1.5 ouro` → "números inteiros".
 7. **reload.** Mude `payments`/mensagens e `accounts.starting-balance`: `/moedas reload` aplica.
    Mude `storage.type`: o reload avisa que precisa reiniciar.
+
+## PR 5 — placeholders
+
+Preparação: PlaceholderAPI instalado; saldo de teste `10 ouro 20 prata 3 bronze`.
+
+1. **Registro.** No boot, sem aviso "PlaceholderAPI ausente". `/papi list` mostra `dreamcoins`.
+2. **Valores.** `/papi parse me %dreamcoins_<x>%` para cada uma:
+   `balance` → `10 ouro, 20 prata e 3 bronze` · `balance_short` → `10o 20p 3b` ·
+   `gold`/`silver`/`bronze` → `10`/`20`/`3` · `total_silver` → `10020` ·
+   `total_bronze_formatted` → `1.002.003` · `balance_vault` → `10020.03` · `highest` → `ouro` ·
+   `has_10_ouro` → `true` · `has_11o` → `false`.
+3. **Sem PlaceholderAPI.** Remova o PAPI: o plugin sobe e avisa "placeholders desativadas".
+4. **⚠ TAB/scoreboard.** Ponha `%dreamcoins_balance%` no TAB: atualiza ao receber/gastar, sem
+   travar o servidor e sem erro de thread no console.
+5. **⚠ Offline.** `/papi parse <jogador offline> %dreamcoins_balance%` → `0 bronze` (placeholders
+   leem só o cache, por desenho).
+6. **`/papi reload`.** As placeholders continuam (expansão persistente).

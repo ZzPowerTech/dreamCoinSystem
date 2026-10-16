@@ -78,8 +78,32 @@ pré-login, `/saldo`, CI.
 **PR 2 (`feature/vault-economy`) — mergeado ([#2](https://github.com/ZzPowerTech/dreamCoinSystem/pull/2)):**
 provedor de Economy do Vault (`vault/`).
 
-**PR 3 (`feature/admin-commands`) — atual:** `/moedas give|take|set|reload` (`admin/`,
-`command/AdminCommand`, `command/AmountArgs`). Próximo: PR 4 (`feature/pay-command`).
+**PR 3 (`feature/admin-commands`) — mergeado ([#3](https://github.com/ZzPowerTech/dreamCoinSystem/pull/3)):**
+`/moedas give|take|set|reload` (`admin/`, `command/AdminCommand`, `command/AmountArgs`).
+
+**PR 4 (`feature/pay-command`) — atual:** `/pagar` com proteções (`payment/`,
+`command/PayCommand`). Próximo: PR 5 (`feature/placeholders`).
+
+### Decisões de design do PR 4
+
+- **`PaymentPolicy` pura** decide antes de mexer em saldo: pagar a si mesmo, mínimo, máximo
+  opcional, alvo offline (se permitido), cooldown com tempo restante e confirmação acima do limite.
+  **O saldo fica de fora de propósito**: quem decide se há dinheiro é a transferência; conferir
+  antes daria uma resposta que pode estar velha no instante de pagar.
+- **Alvo no cache: `transfer` atômico** — débito e crédito juntos, ou nenhum.
+- **Alvo fora do cache: débito no cache gravado na hora (`flushNow`), crédito pelo
+  `applyOffline`, estorno se o crédito falhar.** A fila do banco é FIFO, então o débito chega antes
+  do crédito: um crash entre os dois perde o pagamento em vez de duplicá-lo. O estorno no cache não
+  respeita o teto (`AccountLedger#refund`) — o dinheiro já era do pagador, e recusar a devolução
+  porque ele recebeu algo no meio-tempo faria o dinheiro sumir. Estorno que falha vai ao console em
+  SEVERE pedindo `/moedas give`.
+- **Cooldown conta do pedido, não da conclusão**: um pagamento offline leva um ida-e-volta ao banco,
+  e dois cliques nesse meio passariam os dois. Pagamento que falha desfaz o cooldown.
+- **Confirmação**: um pedido pendente por pagador, com prazo; pedido novo substitui o anterior; sai
+  no quit. Ao confirmar, a política roda de novo (cooldown, alvo online/offline).
+- **Fuzz de conservação** em `PaymentServiceTest`: pagamentos aleatórios entre três jogadores que
+  entram e saem, com quedas de banco no flush e na escrita offline — a soma do dinheiro nunca muda e
+  o cache bate com o banco. É a versão em `src/test` do fuzz que a revisão do PR 1 rodou à parte.
 
 ### Decisões de design do PR 3
 

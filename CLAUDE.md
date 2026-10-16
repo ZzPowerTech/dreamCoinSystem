@@ -101,6 +101,14 @@ provedor de Economy do Vault (`vault/`).
   pedem reinício (trocar de banco com deltas em voo seria pedir para perder dinheiro).
 - **`switch` de comando sobre `Outcome` precisa cobrir `UNAVAILABLE`**: switch com setas não é
   obrigado a ser exaustivo, e o caso esquecido vira resposta nenhuma.
+- **Teto vale só para crédito; débito é limitado pelo teto absoluto** (`Money.MAX_TOTAL`), no
+  banco (`AND (? < 0 OR balance + ? <= ?)`) e no pré-check do `applyOffline` (revisão do PR #3).
+  Com `max-balance` reduzido a quente abaixo de saldos existentes, o guard barrava *débitos* e o
+  admin não conseguia tirar dinheiro de quem passou do teto — justamente a remediação depois de um
+  exploit.
+- **`drifted` pode ser falso positivo** (o alvo entrou entre a leitura e a escrita com um callback
+  ainda em voo): o saldo final está certo, por isso o texto diz "pode ter mudado… confira". O erro
+  é sempre do lado seguro.
 
 ### Decisões de design do PR 2
 

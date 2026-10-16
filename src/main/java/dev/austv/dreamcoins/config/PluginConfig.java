@@ -21,6 +21,7 @@ public record PluginConfig(
     long maxBalance,
     int flushIntervalSeconds,
     int resyncIntervalSeconds,
+    int vaultTimeoutMillis,
     PaymentPolicy.Rules payments) {
 
   /**
@@ -29,7 +30,7 @@ public record PluginConfig(
    * idênticos de um {@code double} — este é o maior saldo de 15 dígitos. Um teto abaixo de 2^53
    * não basta: {@code 8_999_999_999_999_999 / 100} já volta como {@code …998}.
    */
-  public static final long MAX_BALANCE_CEILING = 999_999_999_999_999L;
+  public static final long MAX_BALANCE_CEILING = Money.MAX_TOTAL;
 
   public static PluginConfig from(ConfigurationSection root, Consumer<String> warn) {
     String rawType = root.getString("storage.type", "sqlite");
@@ -73,6 +74,7 @@ public record PluginConfig(
         max,
         positive(root, "accounts.flush-interval-seconds", 10, warn),
         positive(root, "accounts.resync-interval-seconds", 30, warn),
+        positive(root, "vault.offline-timeout-millis", 5000, warn),
         payments(root, max, warn));
   }
 

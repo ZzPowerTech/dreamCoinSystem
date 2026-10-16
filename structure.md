@@ -1,7 +1,7 @@
 # dreamCoinSystem — Estrutura do código-fonte
 
 > Mapa para localizar arquivos sem varrer a árvore inteira. Regenerar quando a arquitetura mudar.
-> Estado: PR 1 (`feature/core-storage`).
+> Estado: PR 3 (`feature/admin-commands`).
 
 ```
 dreamCoinSystem/
@@ -38,14 +38,24 @@ dreamCoinSystem/
     │   │   ├── config/
     │   │   │   ├── PluginConfig.java            # config.yml validado (quantias como no jogo)
     │   │   │   └── Messages.java                # messages.yml em MiniMessage + nomes das moedas
+    │   │   ├── vault/
+    │   │   │   ├── VaultBridge.java             # Vault por UUID, sem Bukkit: cache ou banco esperando
+    │   │   │   └── DreamEconomy.java            # implements Economy: nome/jogador → UUID, main thread
+    │   │   ├── admin/
+    │   │   │   └── AdminOperations.java         # give/take/set por UUID, sem Bukkit (set offline por delta)
     │   │   └── command/
-    │   │       └── BalanceCommand.java          # /saldo [jogador]
+    │   │       ├── BalanceCommand.java          # /saldo [jogador]
+    │   │       ├── AdminCommand.java            # /moedas give|take|set|reload
+    │   │       └── AmountArgs.java              # quantia a partir de um índice dos args; chave de erro
     │   └── resources/
     │       ├── plugin.yml · config.yml · messages.yml
     └── test/java/dev/austv/dreamcoins/      # JUnit 5, sem servidor
         ├── money/                           # Money, Parser (exemplos do pedido), Formatter, VaultAmounts
         ├── account/                         # AccountLedger (puro) e AccountService (SQLite real)
         ├── storage/SqliteStorageTest.java   # deltas, guarda, dois "servidores" no mesmo banco
+        ├── vault/VaultBridgeTest.java       # arredondamento, online × offline, janela de login
+        ├── admin/AdminOperationsTest.java   # online/offline, set com drift, BUSY
+        ├── command/AmountArgsTest.java
         ├── config/PluginConfigTest.java
         └── ResourcesTest.java               # sem comandos do Essentials; chaves do messages.yml
 ```

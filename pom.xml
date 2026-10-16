@@ -20,6 +20,7 @@
     <!-- Versões fixadas nas que o servidor realmente roda, não nas mais recentes:
          compilar contra uma API mais nova que a instalada quebraria em runtime. -->
     <paper.version>1.21.11-R0.1-SNAPSHOT</paper.version>
+    <vault.version>1.7.1</vault.version>
 
     <sqlite.version>3.53.2.1</sqlite.version>
     <mysql.version>9.7.0</mysql.version>
@@ -33,6 +34,10 @@
       <id>papermc</id>
       <url>https://repo.papermc.io/repository/maven-public/</url>
     </repository>
+    <repository>
+      <id>jitpack</id>
+      <url>https://jitpack.io</url>
+    </repository>
   </repositories>
 
   <dependencies>
@@ -42,6 +47,21 @@
       <artifactId>paper-api</artifactId>
       <version>${paper.version}</version>
       <scope>provided</scope>
+    </dependency>
+
+    <!-- O Vault roda como plugin no servidor (depend). O VaultAPI arrasta bukkit legado, que
+         conflita com o paper-api: todas as transitivas fora. -->
+    <dependency>
+      <groupId>com.github.MilkBowl</groupId>
+      <artifactId>VaultAPI</artifactId>
+      <version>${vault.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
 
     <!-- ============ shaded: embarcados no jar ============ -->

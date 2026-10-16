@@ -53,7 +53,12 @@ public final class AccountLedger {
     INSUFFICIENT,
     EXCEEDS_MAX,
     /** Há retirada externa aguardando resposta e a operação depende de saber o saldo exato. */
-    BUSY
+    BUSY,
+    /**
+     * Nada foi feito: o serviço está desligado, ou o banco travou e a operação foi abandonada antes
+     * de rodar. Nunca vem do ledger — é o {@code AccountService} que responde assim.
+     */
+    UNAVAILABLE
   }
 
   /** Alteração de saldo ainda não gravada. */

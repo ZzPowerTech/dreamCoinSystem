@@ -1,6 +1,7 @@
 package dev.austv.dreamcoins.storage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
@@ -47,6 +48,17 @@ class SqliteStorageTest {
     storage.applyDeltas(List.of(new Delta(alice, 25)));
     assertEquals(525, storage.loadOrCreate(alice, "AliceNova", 500));
     assertEquals("AliceNova", storage.findByName("alicenova").orElseThrow().name());
+  }
+
+  @Test
+  void ensureAccountCreatesOnceAndNeverTouchesAnExistingOne() throws Exception {
+    assertTrue(storage.ensureAccount(alice, "alice", 500));
+    assertEquals(OptionalLong.of(500), storage.balance(alice));
+    storage.applyDeltas(List.of(new Delta(alice, 10)));
+    assertFalse(storage.ensureAccount(alice, "outro", 999));
+    assertEquals(OptionalLong.of(510), storage.balance(alice));
+    assertEquals("alice", storage.findByName("alice").orElseThrow().name());
+    assertTrue(storage.ensureAccount(bob, null, 0), "nome desconhecido não impede a criação");
   }
 
   @Test
@@ -120,6 +132,13 @@ class SqliteStorageTest {
     storage.loadOrCreate(alice, "alice", 100);
     assertEquals(new GuardedResult(Outcome.OK, 60), storage.applyGuarded(alice, -40, MAX));
     assertEquals(new GuardedResult(Outcome.OK, 160), storage.applyGuarded(alice, 100, MAX));
+  }
+
+  @Test
+  void guardedDebitIsAllowedAboveTheConfiguredMax() throws Exception {
+    storage.loadOrCreate(alice, "alice", 100);
+    assertEquals(new GuardedResult(Outcome.OK, 90), storage.applyGuarded(alice, -10, 50));
+    assertEquals(Outcome.EXCEEDS_MAX, storage.applyGuarded(alice, 1, 50).outcome());
   }
 
   @Test

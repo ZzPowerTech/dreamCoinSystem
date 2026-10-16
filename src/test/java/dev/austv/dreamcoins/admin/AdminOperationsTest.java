@@ -192,6 +192,27 @@ class AdminOperationsTest {
     assertEquals(30, stored(bob));
   }
 
+  /** Revisão do PR #3 (I1): reduzir o teto não pode impedir de tirar dinheiro de quem passou. */
+  @Test
+  void loweredMaxStillLetsTheAdminReduceAnOfflineBalance() throws Exception {
+    login(bob, "bob");
+    accounts.deposit(bob, 700); // 800
+    logout(bob);
+    accounts.configure(100, 500); // teto reduzido a quente, abaixo do saldo dele
+    assertEquals(new Result(Outcome.OK, 700, false), await(admin.take(bob, 100)));
+    assertEquals(new Result(Outcome.OK, 0, false), await(admin.set(bob, 0)));
+    assertEquals(Outcome.EXCEEDS_MAX, await(admin.give(bob, 501)).outcome());
+  }
+
+  @Test
+  void loweredMaxStillLetsTheAdminReduceAnOnlineBalance() throws Exception {
+    login(alice, "alice");
+    accounts.deposit(alice, 700);
+    accounts.configure(100, 500);
+    assertEquals(new Result(Outcome.OK, 700, false), await(admin.take(alice, 100)));
+    assertEquals(new Result(Outcome.OK, 300, false), await(admin.set(alice, 300)));
+  }
+
   @Test
   void unknownAccount() throws Exception {
     assertEquals(Outcome.NO_ACCOUNT, await(admin.give(bob, 1)).outcome());

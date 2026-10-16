@@ -14,13 +14,18 @@ import dev.austv.dreamcoins.storage.SequencedExecutor;
 import dev.austv.dreamcoins.storage.SqliteStorage;
 import dev.austv.dreamcoins.storage.Storage;
 import dev.austv.dreamcoins.storage.StorageType;
+import dev.austv.dreamcoins.vault.DreamEconomy;
+import dev.austv.dreamcoins.vault.VaultBridge;
 import java.sql.SQLException;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.logging.Level;
+import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.RegisteredServiceProvider;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /** Ponto de entrada do plugin. */
@@ -83,6 +88,7 @@ public final class DreamCoins extends JavaPlugin {
     Objects.requireNonNull(getCommand("pagar")).setTabCompleter(pay);
     getServer().getPluginManager().registerEvents(pay, this);
 
+    registerEconomy();
     scheduleTasks();
     String backend = config.storageType().name().toLowerCase(Locale.ROOT);
     getLogger().info("Economia pronta (" + backend + ").");
@@ -106,13 +112,16 @@ public final class DreamCoins extends JavaPlugin {
     reloadConfig();
     PluginConfig fresh = PluginConfig.from(getConfig(), message -> getLogger().warning(message));
     messages.reload();
+    // Saldo inicial e teto valem a quente mesmo quando outra parte pede reinício; o campo config
+    // só é trocado sem reinício porque guarda o que as tarefas e o Vault estão usando de fato.
     accounts.configure(fresh.startingBalance(), fresh.maxBalance());
     boolean needsRestart =
         fresh.storageType() != config.storageType()
             || !fresh.sqliteFile().equals(config.sqliteFile())
             || !fresh.mysql().equals(config.mysql())
             || fresh.flushIntervalSeconds() != config.flushIntervalSeconds()
-            || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds();
+            || fresh.resyncIntervalSeconds() != config.resyncIntervalSeconds()
+            || fresh.vaultTimeoutMillis() != config.vaultTimeoutMillis();
     paymentRules = fresh.payments();
     if (!needsRestart) {
       config = fresh;
@@ -133,6 +142,38 @@ public final class DreamCoins extends JavaPlugin {
       return new MySqlStorage(config.mysql());
     }
     return new SqliteStorage(getDataFolder().toPath().resolve(config.sqliteFile()));
+  }
+
+  /**
+   * Registra a economia com prioridade máxima. A conferência roda no primeiro tick, depois de todo
+   * plugin ter subido: o Essentials (ou outro) pode registrar a dele depois de nós, e um provedor
+   * concorrente vencendo significaria lojas cobrando numa moeda que este plugin não vê.
+   */
+  private void registerEconomy() {
+    VaultBridge bridge =
+        new VaultBridge(
+            accounts, () -> messages.formatter(), config.vaultTimeoutMillis(), getLogger());
+    DreamEconomy economy =
+        new DreamEconomy(this, accounts, bridge, config.vaultTimeoutMillis());
+    getServer()
+        .getServicesManager()
+        .register(Economy.class, economy, this, ServicePriority.Highest);
+    Bukkit.getScheduler()
+        .runTask(
+            this,
+            () -> {
+              RegisteredServiceProvider<Economy> active =
+                  getServer().getServicesManager().getRegistration(Economy.class);
+              if (active != null && active.getProvider() != economy) {
+                getLogger().severe(
+                    "Outro provedor de economia está ativo no Vault: "
+                        + active.getPlugin().getName()
+                        + " ("
+                        + active.getProvider().getName()
+                        + "). Lojas e leilões NÃO vão usar as moedas do dreamCoinSystem;"
+                        + " desative a economia daquele plugin.");
+              }
+            });
   }
 
   private void scheduleTasks() {

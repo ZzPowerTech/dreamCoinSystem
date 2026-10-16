@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
 import dev.austv.dreamcoins.account.AccountLedger.Outcome;
+import dev.austv.dreamcoins.money.Money;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -104,6 +105,19 @@ public abstract class SqlStorage implements Storage {
   }
 
   @Override
+  public boolean ensureAccount(UUID uuid, String name, long startingBalance) throws SQLException {
+    try (Connection connection = dataSource.getConnection();
+        PreparedStatement insert = connection.prepareStatement(insertIgnoreSql())) {
+      insert.setString(1, uuid.toString());
+      insert.setString(2, name == null ? "" : name);
+      insert.setLong(3, startingBalance);
+      insert.setLong(4, System.currentTimeMillis());
+      insert.setLong(5, 0);
+      return insert.executeUpdate() == 1;
+    }
+  }
+
+  @Override
   public List<Delta> applyDeltas(List<Delta> deltas) throws SQLException {
     List<Delta> nonZero = deltas.stream().filter(d -> d.amount() != 0).toList();
     if (nonZero.isEmpty()) {
@@ -163,7 +177,10 @@ public abstract class SqlStorage implements Storage {
   @Override
   public GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance) throws SQLException {
     // Fora da faixa nem chega ao SQL: o MySQL estouraria BIGINT em vez de recusar.
-    if (delta > maxBalance || delta < -maxBalance || delta == 0) {
+    // Fora da faixa nem chega ao SQL: o MySQL estouraria BIGINT em vez de recusar. Débito é
+    // limitado pelo teto ABSOLUTO, não pelo configurado: um max-balance reduzido abaixo de saldos
+    // existentes não pode impedir de tirar dinheiro de quem passou dele.
+    if (delta > maxBalance || delta < -Money.MAX_TOTAL || delta == 0) {
       OptionalLong current = balance(uuid);
       if (current.isEmpty()) {
         return new GuardedResult(Outcome.NO_ACCOUNT, 0);
@@ -179,14 +196,15 @@ public abstract class SqlStorage implements Storage {
               connection.prepareStatement(
                   """
                   UPDATE dc_accounts SET balance = balance + ?, updated_at = ?
-                  WHERE uuid = ? AND balance + ? >= 0 AND balance + ? <= ?
+                  WHERE uuid = ? AND balance + ? >= 0 AND (? < 0 OR balance + ? <= ?)
                   """)) {
             update.setLong(1, delta);
             update.setLong(2, System.currentTimeMillis());
             update.setString(3, uuid.toString());
             update.setLong(4, delta);
             update.setLong(5, delta);
-            update.setLong(6, maxBalance);
+            update.setLong(6, delta);
+            update.setLong(7, maxBalance);
             changed = update.executeUpdate();
           }
           OptionalLong balance = balanceOf(connection, uuid);

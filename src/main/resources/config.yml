@@ -32,6 +32,11 @@ accounts:
   # para mostrar o que outro servidor gravou.
   resync-interval-seconds: 30
 
+vault:
+  # Quanto a main thread espera o banco numa operação do Vault com jogador OFFLINE (online é
+  # instantâneo, vem do cache). Passou disso, o Vault recebe falha e o console avisa.
+  offline-timeout-millis: 5000
+
 # Proteções do /pagar.
 payments:
   # Menor pagamento aceito.

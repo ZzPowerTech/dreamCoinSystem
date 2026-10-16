@@ -88,6 +88,12 @@ class AccountServiceTest {
     }
 
     @Override
+    public boolean ensureAccount(UUID uuid, String name, long startingBalance)
+        throws SQLException {
+      return delegate.ensureAccount(uuid, name, startingBalance);
+    }
+
+    @Override
     public GuardedResult applyGuarded(UUID uuid, long delta, long maxBalance)
         throws SQLException {
       return delegate.applyGuarded(uuid, delta, maxBalance);

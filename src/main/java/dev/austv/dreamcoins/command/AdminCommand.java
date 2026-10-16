@@ -109,7 +109,10 @@ public final class AdminCommand implements TabExecutor {
         .whenComplete(
             (ignored, error) -> {
               if (error != null) {
-                logger.log(Level.WARNING, "/moedas " + sub + " " + name + " falhou", error);
+                logger.log(
+                    Level.WARNING,
+                    "/moedas " + sub + " " + name + " de " + sender.getName() + " falhou",
+                    error);
                 messages.send(sender, "errors.database");
               }
             });
@@ -170,6 +173,7 @@ public final class AdminCommand implements TabExecutor {
               Placeholder.unparsed("max", format(accounts.maxBalance())));
       case BUSY -> messages.send(sender, "admin.busy", player);
       case NO_ACCOUNT -> messages.send(sender, "errors.unknown-player", player);
+      case UNAVAILABLE -> messages.send(sender, "errors.database");
     }
   }
 

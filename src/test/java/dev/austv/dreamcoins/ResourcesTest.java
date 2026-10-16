@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.austv.dreamcoins.command.AmountArgs;
 import dev.austv.dreamcoins.config.PluginConfig;
+import dev.austv.dreamcoins.money.MoneyParser.ParseError;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -60,6 +62,19 @@ class ResourcesTest {
         "errors.account-loading",
         "errors.database",
         "errors.account-load-failed",
+        "admin.usage",
+        "admin.give",
+        "admin.take",
+        "admin.set",
+        "admin.set-drift",
+        "admin.insufficient",
+        "admin.exceeds-max",
+        "admin.busy",
+        "admin.reloaded",
+        "admin.reload-restart",
+        "notify.given",
+        "notify.taken",
+        "notify.set",
         "coins.gold.singular",
         "coins.silver.symbol",
         "coins.bronze.plural",
@@ -70,6 +85,16 @@ class ResourcesTest {
     assertTrue(load("messages.yml").isString(key), key);
   }
 
+
+  /** Todo erro de quantia tem texto: senão o jogador veria a chave crua no chat. */
+  @Test
+  void everyAmountErrorHasAMessage() throws Exception {
+    YamlConfiguration messages = load("messages.yml");
+    for (ParseError error : ParseError.values()) {
+      String key = AmountArgs.messageKey(error);
+      assertTrue(messages.isString(key), key);
+    }
+  }
   /** O config.yml do jar sobe sem nenhum aviso. */
   @Test
   void bundledConfigIsValid() throws Exception {

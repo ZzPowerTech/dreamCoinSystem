@@ -2,6 +2,7 @@ package dev.austv.dreamcoins.account;
 
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
 import dev.austv.dreamcoins.account.AccountLedger.Outcome;
+import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.storage.GuardedResult;
 import dev.austv.dreamcoins.storage.SequencedExecutor;
 import dev.austv.dreamcoins.storage.SequencedExecutor.Submitted;
@@ -333,6 +334,17 @@ public final class AccountService {
         db.submit(() -> storage.findByName(name)).future(), found -> found.map(this::view));
   }
 
+  /**
+   * Saldo de qualquer conta, completando na main thread: do cache na hora, ou lido do banco. Vazio
+   * se a conta não existe.
+   */
+  public CompletableFuture<OptionalLong> readBalance(UUID uuid) {
+    if (ledger.contains(uuid)) {
+      return CompletableFuture.completedFuture(ledger.balance(uuid));
+    }
+    return onMain(db.submit(() -> storage.balance(uuid)).future(), Function.identity());
+  }
+
   private AccountView view(StoredAccount stored) {
     long balance = ledger.balance(stored.uuid()).orElse(stored.balance());
     return new AccountView(stored.uuid(), stored.name(), balance);
@@ -601,9 +613,10 @@ public final class AccountService {
     if (closed) {
       return OfflineWrite.done(new GuardedResult(Outcome.UNAVAILABLE, 0));
     }
-    // Fora da faixa é recusado antes de virar reserva: duas reservas de Long.MAX_VALUE estourariam
-    // o saldo interno, e -Long.MIN_VALUE nem existe.
-    if (delta == Long.MIN_VALUE || Math.abs(delta) > ledger.maxBalance()) {
+    // Fora da faixa é recusado antes de virar reserva. Débito pelo teto ABSOLUTO: reservas não
+    // estouram o long, e um max-balance reduzido não impede de tirar dinheiro de quem passou dele.
+    // Crédito pelo teto configurado.
+    if (delta > ledger.maxBalance() || delta < -Money.MAX_TOTAL) {
       Outcome refusal = delta < 0 ? Outcome.INSUFFICIENT : Outcome.EXCEEDS_MAX;
       return OfflineWrite.done(new GuardedResult(refusal, ledger.balance(uuid).orElse(0)));
     }

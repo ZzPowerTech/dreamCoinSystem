@@ -56,3 +56,20 @@ similar) no servidor local.
 10. **⚠ Banco travado.** Com MySQL, derrube o banco e faça uma venda para um jogador offline: a
     loja recebe falha em ~5 s, o console avisa "abandonada sem efeito", e vendas seguintes falham
     **na hora** (disjuntor) sem travar o servidor. Religue o banco: tudo volta a funcionar.
+
+## PR 3 — `/moedas`
+
+1. **Permissão.** Sem OP, `/moedas give <você> 1 ouro` → sem permissão.
+2. **give/take online.** `/moedas give <jogador> 1 ouro 35 bronze` → mensagem com o saldo novo; o
+   jogador recebe o aviso; o console registra `[moedas] ... give 100035 bronze -> ...`.
+   `/moedas take <jogador> 999 ouro` acima do saldo → "tem só ...", saldo intacto.
+3. **set.** `/moedas set <jogador> 0` zera; `/moedas set <jogador> 5 prata` → `5 prata`.
+4. **Offline.** Com o jogador desconectado: give, take e set funcionam e o `/saldo <nome>` mostra o
+   valor; ao entrar, o saldo confere.
+5. **⚠ set com drift.** Com o jogador offline, rode `/moedas set <nome> 0` e, no mesmo instante,
+   pague-o por uma loja (Vault): se a venda cair no meio, o admin vê "o saldo mudou durante a
+   operação" com o valor real.
+6. **Erros de quantia.** `/moedas give x 3 cobre` → "Moeda desconhecida: cobre";
+   `/moedas give x 0` → "maior que zero"; `/moedas give x 1.5 ouro` → "números inteiros".
+7. **reload.** Mude `payments`/mensagens e `accounts.starting-balance`: `/moedas reload` aplica.
+   Mude `storage.type`: o reload avisa que precisa reiniciar.

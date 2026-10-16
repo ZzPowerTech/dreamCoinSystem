@@ -62,6 +62,11 @@ public final class MoneyParser {
         coinText = compact.group(2);
         i += 1;
       } else if (NUMBER.matcher(token).matches()) {
+        // O número primeiro: "/pagar fox 0" deve dizer "maior que zero", não "faltou a moeda".
+        ParseResult.Failure badNumber = validateNumber(token);
+        if (badNumber != null) {
+          return badNumber;
+        }
         if (i + 1 >= args.size()) {
           return new ParseResult.Failure(ParseError.MISSING_COIN, token);
         }

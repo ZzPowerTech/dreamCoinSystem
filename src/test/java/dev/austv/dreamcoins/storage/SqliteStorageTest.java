@@ -142,6 +142,20 @@ class SqliteStorageTest {
   }
 
   @Test
+  void transferMovesBothSidesOrNeither() throws Exception {
+    storage.loadOrCreate(alice, "alice", 100);
+    storage.loadOrCreate(bob, "bob", 0);
+    assertEquals(Outcome.OK, storage.transfer(alice, bob, 60, MAX));
+    assertEquals(OptionalLong.of(40), storage.balance(alice));
+    assertEquals(OptionalLong.of(60), storage.balance(bob));
+    assertEquals(Outcome.INSUFFICIENT, storage.transfer(alice, bob, 41, MAX));
+    assertEquals(Outcome.EXCEEDS_MAX, storage.transfer(alice, bob, 40, 99));
+    assertEquals(Outcome.NO_ACCOUNT, storage.transfer(alice, UUID.randomUUID(), 1, MAX));
+    assertEquals(OptionalLong.of(40), storage.balance(alice), "recusa não pode debitar");
+    assertEquals(OptionalLong.of(60), storage.balance(bob));
+  }
+
+  @Test
   void guardedWriteRefusesAndChangesNothing() throws Exception {
     storage.loadOrCreate(alice, "alice", 100);
     assertEquals(Outcome.INSUFFICIENT, storage.applyGuarded(alice, -101, MAX).outcome());

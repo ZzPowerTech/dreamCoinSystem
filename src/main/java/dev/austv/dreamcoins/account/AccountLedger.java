@@ -364,6 +364,44 @@ public final class AccountLedger {
     }
   }
 
+  /**
+   * Débito de uma conta do cache que <b>não</b> vai pelo flush: ele é gravado no banco pela
+   * operação {@code seq} (a transferência atômica para conta offline), junto do crédito do outro
+   * lado. O saldo cai já, para o jogador não gastar o mesmo dinheiro; o valor fica como em
+   * voo (o resync o conta e a conta não sai do cache) e <b>não</b> vai ao pendente — senão o flush
+   * o gravaria uma segunda vez.
+   */
+  public Outcome debitInFlight(UUID uuid, long amount, long seq) {
+    requireNonNegative(amount);
+    Entry entry = entries.get(uuid);
+    if (entry == null) {
+      return Outcome.NO_ACCOUNT;
+    }
+    if (amount > entry.balance) {
+      return Outcome.INSUFFICIENT;
+    }
+    entry.balance -= amount;
+    entry.inFlight.add(new InFlight(seq, -amount));
+    entry.lastWriteSeq = Math.max(entry.lastWriteSeq, seq);
+    return Outcome.OK;
+  }
+
+  /**
+   * A operação {@code seq} de um {@link #debitInFlight} terminou. Aplicada: o banco tem o débito,
+   * só sai da lista em voo. Recusada ou com erro: o banco não tem nada, e o valor volta ao saldo —
+   * sem passar pelo pendente, porque não há o que gravar.
+   */
+  public void debitFinished(UUID uuid, long amount, long seq, boolean applied, long nowMillis) {
+    Entry entry = entries.get(uuid);
+    if (entry == null || !entry.inFlight.removeIf(f -> f.seq() == seq)) {
+      return;
+    }
+    if (!applied) {
+      entry.balance += amount;
+    }
+    evictIfIdle(uuid, entry, nowMillis);
+  }
+
   /** A gravação {@code seq} foi confirmada. Contas offline que ficaram quites saem do cache. */
   public void flushCompleted(long seq, long nowMillis) {
     List<UUID> idleOffline = new ArrayList<>();

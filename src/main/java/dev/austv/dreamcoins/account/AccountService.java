@@ -269,6 +269,9 @@ public final class AccountService {
               }
               if (error != null) {
                 logger.log(Level.WARNING, "Falha ao gravar saldos; tento no próximo ciclo", error);
+                // O banco caiu: abrir já poupa a primeira operação offline do Vault de esperar o
+                // timeout de conexão para descobrir o mesmo.
+                openBreaker();
                 List<Delta> lost = ledger.flushFailed(write.seq(), batch);
                 if (!lost.isEmpty()) {
                   logger.severe("Deltas sem conta no cache após flush falho: " + lost);

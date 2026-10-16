@@ -329,4 +329,34 @@ class VaultBridgeTest {
     assertEquals("prata", vault.currencyNameSingular());
     assertEquals("prata", vault.currencyNamePlural());
   }
+
+  // ---- leitura fora da main thread (PR 5) ----
+
+  @Test
+  void cachedAccountsAreReadableFromAnyThreadThroughTheMirror() throws Exception {
+    login(alice, "alice");
+    accounts.deposit(alice, 23); // 1.23
+    double[] seen = new double[1];
+    boolean[] has = new boolean[2];
+    Thread reader =
+        new Thread(
+            () -> {
+              seen[0] = vault.balanceFromAnyThread(alice).orElseThrow();
+              has[0] = vault.hasFromAnyThread(alice, 1.23).orElseThrow();
+              has[1] = vault.hasFromAnyThread(alice, 1.231).orElseThrow();
+            });
+    reader.start();
+    reader.join();
+    assertEquals(1.23, seen[0]);
+    assertTrue(has[0]);
+    assertFalse(has[1], "has pelo espelho arredonda para cima, como o saque");
+  }
+
+  @Test
+  void accountsOutsideTheCacheAreNotAnsweredByTheMirror() throws Exception {
+    login(bob, "bob");
+    logout(bob);
+    assertTrue(vault.balanceFromAnyThread(bob).isEmpty());
+    assertTrue(vault.hasFromAnyThread(bob, 0.01).isEmpty());
+  }
 }

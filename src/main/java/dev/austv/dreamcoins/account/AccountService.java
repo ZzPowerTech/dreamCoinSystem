@@ -166,7 +166,10 @@ public final class AccountService {
    * já decide se aquela leitura serve.
    */
   public void quit(UUID uuid) {
-    ledger.takePending(uuid).ifPresent(delta -> submitFlush(List.of(delta)));
+    // Grava todo o pendente num lote só, e não só o de quem saiu: uma transferência entre dois
+    // jogadores online deixa um delta em cada conta, e gravá-los em lotes separados abriria uma
+    // janela em que só o crédito está no banco.
+    submitFlush(ledger.takePending());
     ledger.markOffline(uuid, clock.getAsLong());
   }
 
@@ -308,6 +311,11 @@ public final class AccountService {
 
   // ---------------------------------------------------------------- leitura
 
+  /** O jogador está online neste servidor (o predicado do Bukkit), não importa o cache. */
+  public boolean isOnline(UUID uuid) {
+    return isOnline.test(uuid);
+  }
+
   public boolean isLoaded(UUID uuid) {
     return ledger.contains(uuid);
   }
@@ -385,27 +393,71 @@ public final class AccountService {
   }
 
   /**
-   * Devolve um débito que não pôde ser concluído. No cache vai sem teto (ver {@link
-   * AccountLedger#refund}); se a conta já saiu do cache, vai pelo banco como crédito, e aí o teto
-   * do banco vale — quem chama precisa registrar a recusa, porque é dinheiro a devolver à mão.
+   * Transferência de uma conta do cache ({@code from}) para uma fora dele ({@code to}), atômica no
+   * banco: débito e crédito na mesma transação ({@link Storage#transfer}). Completa na main thread.
+   *
+   * <p>O débito sai do saldo do cache na hora, como débito em voo ({@link
+   * AccountLedger#debitInFlight}) — não pelo pendente, que o flush gravaria de novo. Recusada no
+   * banco ou com erro, o valor volta ao saldo do cache; aplicada, o crédito do alvo segue o caminho
+   * de qualquer crédito externo (órfão, se ele estiver entrando).
+   *
+   * <p>Por que não "débito pelo flush + crédito pelo {@code applyOffline}": entre os dois o crédito
+   * podia ficar gravado com o débito só no cache — com o pagador tendo um flush em voo, ou com o
+   * flush do débito falhando —, e um crash ali criava o valor do pagamento (revisão do PR #4).
+   * Numa transação só, o crash leva os dois ou nenhum. E ela é segura mesmo com flush em voo do
+   * pagador: a guarda do débito olha o saldo do <i>banco</i>, então se um crédito anterior falhou e
+   * o banco tem menos, a transferência inteira é recusada em vez de cortar no piso.
    */
-  public CompletableFuture<Outcome> refund(UUID uuid, long amount) {
+  public CompletableFuture<Outcome> transferToOffline(UUID from, UUID to, long amount) {
     if (closed) {
       return CompletableFuture.completedFuture(Outcome.UNAVAILABLE);
     }
-    if (ledger.contains(uuid)) {
-      return CompletableFuture.completedFuture(ledger.refund(uuid, amount));
+    if (!ledger.contains(from)) {
+      return CompletableFuture.completedFuture(Outcome.NO_ACCOUNT);
     }
-    return applyOffline(uuid, amount).thenApply(GuardedResult::outcome);
-  }
-
-  /**
-   * Grava já o pendente de uma conta (se ela não tem flush em voo). Usado antes de uma escrita
-   * offline que depende de um débito do cache: a fila é FIFO: o débito chega ao banco antes do
-   * crédito, e um crash no meio perde dinheiro em vez de criá-lo.
-   */
-  public void flushNow(UUID uuid) {
-    ledger.takePending(uuid).ifPresent(delta -> submitFlush(List.of(delta)));
+    if (ledger.contains(to)) {
+      return CompletableFuture.completedFuture(ledger.transfer(from, to, amount));
+    }
+    if (amount > ledger.maxBalance()) {
+      return CompletableFuture.completedFuture(Outcome.EXCEEDS_MAX);
+    }
+    if (ledger.balance(from).orElse(0) < amount) {
+      return CompletableFuture.completedFuture(Outcome.INSUFFICIENT);
+    }
+    long max = ledger.maxBalance();
+    AtomicBoolean claim = new AtomicBoolean();
+    Submitted<Outcome> write =
+        db.submit(
+            claimed(claim, () -> storage.transfer(from, to, amount, max), Outcome.UNAVAILABLE));
+    Outcome debit = ledger.debitInFlight(from, amount, write.seq());
+    if (debit != Outcome.OK) {
+      // Conferido logo acima, na mesma thread: não deveria acontecer. Se acontecer, a tarefa já
+      // está na fila e precisa ser abandonada antes de rodar — o cache não descontou nada.
+      if (claim.compareAndSet(false, true)) {
+        return CompletableFuture.completedFuture(debit);
+      }
+      logger.severe(
+          "Transferência de " + amount + " bronze de " + from + " rodou sem débito no cache.");
+    }
+    CompletableFuture<Outcome> out = new CompletableFuture<>();
+    write
+        .future()
+        .whenCompleteAsync(
+            (outcome, error) -> {
+              boolean applied = error == null && outcome == Outcome.OK;
+              long now = clock.getAsLong();
+              ledger.debitFinished(from, amount, write.seq(), applied, now);
+              if (applied) {
+                ledger.creditApplied(to, amount, write.seq(), now);
+              }
+              if (error != null) {
+                out.completeExceptionally(error);
+              } else {
+                out.complete(outcome);
+              }
+            },
+            mainThread);
+    return out;
   }
 
   public Outcome transfer(UUID from, UUID to, long amount) {

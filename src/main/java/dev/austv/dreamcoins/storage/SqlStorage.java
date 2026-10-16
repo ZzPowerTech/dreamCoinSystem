@@ -220,6 +220,54 @@ public abstract class SqlStorage implements Storage {
   }
 
   @Override
+  public Outcome transfer(UUID from, UUID to, long amount, long maxBalance) throws SQLException {
+    if (amount <= 0 || amount > maxBalance) {
+      return amount <= 0 ? Outcome.OK : Outcome.EXCEEDS_MAX;
+    }
+    try (Connection connection = dataSource.getConnection()) {
+      boolean autoCommit = connection.getAutoCommit();
+      connection.setAutoCommit(false);
+      try {
+        long now = System.currentTimeMillis();
+        try (PreparedStatement debit =
+            connection.prepareStatement(
+                "UPDATE dc_accounts SET balance = balance - ?, updated_at = ?"
+                    + " WHERE uuid = ? AND balance >= ?")) {
+          debit.setLong(1, amount);
+          debit.setLong(2, now);
+          debit.setString(3, from.toString());
+          debit.setLong(4, amount);
+          if (debit.executeUpdate() != 1) {
+            connection.rollback();
+            return Outcome.INSUFFICIENT;
+          }
+        }
+        try (PreparedStatement credit =
+            connection.prepareStatement(
+                "UPDATE dc_accounts SET balance = balance + ?, updated_at = ?"
+                    + " WHERE uuid = ? AND balance + ? <= ?")) {
+          credit.setLong(1, amount);
+          credit.setLong(2, now);
+          credit.setString(3, to.toString());
+          credit.setLong(4, amount);
+          credit.setLong(5, maxBalance);
+          if (credit.executeUpdate() != 1) {
+            connection.rollback();
+            return balanceOf(connection, to).isEmpty() ? Outcome.NO_ACCOUNT : Outcome.EXCEEDS_MAX;
+          }
+        }
+        connection.commit();
+        return Outcome.OK;
+      } catch (SQLException | RuntimeException error) {
+        connection.rollback();
+        throw error;
+      } finally {
+        connection.setAutoCommit(autoCommit);
+      }
+    }
+  }
+
+  @Override
   public OptionalLong balance(UUID uuid) throws SQLException {
     try (Connection connection = dataSource.getConnection()) {
       return balanceOf(connection, uuid);

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
+import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.money.MoneyFormatter;
 import dev.austv.dreamcoins.storage.GuardedResult;
@@ -77,6 +78,13 @@ class VaultOutageTest {
     public List<Delta> applyDeltas(List<Delta> deltas) throws SQLException {
       maybeFail();
       return delegate.applyDeltas(deltas);
+    }
+
+    @Override
+    public Outcome transfer(UUID from, UUID to, long amount, long maxBalance)
+        throws SQLException {
+      maybeFail();
+      return delegate.transfer(from, to, amount, maxBalance);
     }
 
     @Override

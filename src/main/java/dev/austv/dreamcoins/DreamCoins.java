@@ -82,7 +82,8 @@ public final class DreamCoins extends JavaPlugin {
     paymentRules = config.payments();
     PaymentService payments =
         new PaymentService(
-            accounts, () -> paymentRules, System::currentTimeMillis, getLogger());
+            // Relógio monotônico: um ajuste de NTP para trás não pode virar "espere 3600 s".
+            accounts, () -> paymentRules, () -> System.nanoTime() / 1_000_000, getLogger());
     PayCommand pay = new PayCommand(accounts, payments, messages, getLogger());
     Objects.requireNonNull(getCommand("pagar")).setExecutor(pay);
     Objects.requireNonNull(getCommand("pagar")).setTabCompleter(pay);

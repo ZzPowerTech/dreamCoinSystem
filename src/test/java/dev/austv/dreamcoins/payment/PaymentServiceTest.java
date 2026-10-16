@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.austv.dreamcoins.account.AccountLedger.Delta;
+import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.money.MoneyFormatter;
@@ -92,6 +93,16 @@ class PaymentServiceTest {
     public boolean ensureAccount(UUID uuid, String name, long startingBalance)
         throws SQLException {
       return delegate.ensureAccount(uuid, name, startingBalance);
+    }
+
+    @Override
+    public Outcome transfer(UUID from, UUID to, long amount, long maxBalance)
+        throws SQLException {
+      if (failNextGuarded) {
+        failNextGuarded = false;
+        throw new SQLException("simulated outage");
+      }
+      return delegate.transfer(from, to, amount, maxBalance);
     }
 
     @Override
@@ -483,5 +494,117 @@ class PaymentServiceTest {
       assertEquals(3_000, total, "seed " + seed + " " + trace);
       assertFalse(total != 3_000);
     }
+  }
+
+  // ---- revisão do PR #4: um crash nunca pode criar o valor do pagamento ----
+
+  private long dbTotal(UUID... ids) throws Exception {
+    long total = 0;
+    for (UUID id : ids) {
+      total += storage.balance(id).orElseThrow();
+    }
+    return total;
+  }
+
+  /** C2: o pagador tem um flush em voo; o banco nunca pode ter o crédito sem o débito. */
+  @Test
+  void offlinePaymentWithAFlushInFlightIsAtomicInTheDatabase() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    accounts.deposit(payer, 1);
+    accounts.flushAll(); // flush do +1 em voo, callback não rodou
+    CompletableFuture<Result> payment = payments.request(payer, fox, "fox", 500, false, false);
+    db.submit(() -> null).future().get(); // fila andou; a main thread ainda não
+    assertEquals(2 * TWO_GOLD + 1, dbTotal(payer, fox), "crash aqui não pode criar dinheiro");
+    assertEquals(Status.PAID, await(payment).status());
+    assertEquals(TWO_GOLD + 1 - 500, stored(payer));
+    assertEquals(TWO_GOLD + 500, stored(fox));
+  }
+
+  /** C3: o flush do pagador falha logo antes do pagamento. */
+  @Test
+  void offlinePaymentAfterAFailedFlushIsAtomicInTheDatabase() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    accounts.withdraw(payer, 1);
+    storage.failNextFlush = true;
+    accounts.flushAll(); // vai falhar
+    CompletableFuture<Result> payment = payments.request(payer, fox, "fox", 500, false, false);
+    db.submit(() -> null).future().get();
+    assertEquals(2 * TWO_GOLD, dbTotal(payer, fox), "o -1 falhou; o pagamento, inteiro, entrou");
+    assertEquals(Status.PAID, await(payment).status());
+    assertEquals(TWO_GOLD - 1 - 500, stored(payer));
+    assertEquals(TWO_GOLD + 500, stored(fox));
+  }
+
+  @Test
+  void twoQuickOfflinePaymentsStayAtomic() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    CompletableFuture<Result> first = payments.request(payer, fox, "fox", 100, true, false);
+    CompletableFuture<Result> second = payments.request(payer, fox, "fox", 200, true, false);
+    db.submit(() -> null).future().get();
+    assertEquals(2 * TWO_GOLD, dbTotal(payer, fox));
+    assertEquals(Status.PAID, await(first).status());
+    assertEquals(Status.PAID, await(second).status());
+    assertEquals(TWO_GOLD - 300, stored(payer));
+    assertEquals(TWO_GOLD + 300, stored(fox));
+  }
+
+  /** O cache não deixa gastar o que está em voo para um alvo offline. */
+  @Test
+  void moneyInFlightToAnOfflineTargetCannotBeSpentAgain() throws Exception {
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    payments.request(payer, fox, "fox", TWO_GOLD, false, false);
+    assertEquals(OptionalLong.of(0), accounts.balance(payer));
+    assertEquals(Outcome.INSUFFICIENT, accounts.withdraw(payer, 1));
+    settle();
+    assertEquals(0, stored(payer));
+  }
+
+  /** M2: a regra de "alvo offline" olha o jogador real, não o cache. */
+  @Test
+  void offlineRuleFollowsTheRealPlayerNotTheCache() throws Exception {
+    rules = new Rules(1, 0, 0, 0, 30_000, false);
+    login(payer, "payer");
+    login(fox, "fox");
+    accounts.deposit(fox, 1);
+    online.remove(fox);
+    accounts.quit(fox); // ainda no cache, devendo flush, mas já saiu
+    assertEquals(Status.OFFLINE_NOT_ALLOWED, pay(fox, 10).status());
+  }
+
+  /** M1: um pagamento que falha tarde não apaga o cooldown de outro mais novo. */
+  @Test
+  void lateFailureDoesNotEraseANewerCooldown() throws Exception {
+    rules = new Rules(1, 0, 3_000, 0, 30_000, true);
+    login(payer, "payer");
+    login(fox, "fox");
+    logout(fox);
+    storage.failNextGuarded = true; // o transfer deste vai falhar
+    CompletableFuture<Result> slow = payments.request(payer, fox, "fox", 10, false, false);
+    now.addAndGet(5_000);
+    login(fox, "fox");
+    assertEquals(Status.PAID, await(payments.request(payer, fox, "fox", 10, false, false)).status());
+    assertEquals(Status.UNAVAILABLE, await(slow).status());
+    assertEquals(Status.COOLDOWN, pay(fox, 10).status(), "o cooldown do segundo continua");
+  }
+
+  /** M4: confirmação recusada por cooldown não perde o pedido. */
+  @Test
+  void confirmationRefusedByCooldownKeepsTheRequest() throws Exception {
+    rules = new Rules(1, 0, 3_000, 1_000, 30_000, true);
+    login(payer, "payer");
+    login(fox, "fox");
+    assertEquals(Status.NEEDS_CONFIRMATION, pay(fox, 5_000).status());
+    assertEquals(Status.PAID, pay(fox, 10).status()); // pequeno, sem confirmar: inicia o cooldown
+    assertEquals(Status.COOLDOWN, await(payments.confirm(payer, false)).status());
+    now.addAndGet(3_000);
+    assertEquals(Status.PAID, await(payments.confirm(payer, false)).status());
   }
 }

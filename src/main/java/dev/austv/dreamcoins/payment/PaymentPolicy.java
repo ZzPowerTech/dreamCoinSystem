@@ -58,7 +58,7 @@ public final class PaymentPolicy {
       Rules rules,
       UUID payer,
       UUID target,
-      boolean targetCached,
+      boolean targetOnline,
       long amount,
       long nowMillis,
       OptionalLong lastPaymentAt,
@@ -74,7 +74,7 @@ public final class PaymentPolicy {
     if (rules.maxAmount() > 0 && amount > rules.maxAmount()) {
       return new Decision.Refused(Refusal.ABOVE_MAX, rules.maxAmount());
     }
-    if (!targetCached && !rules.allowOffline()) {
+    if (!targetOnline && !rules.allowOffline()) {
       return new Decision.Refused(Refusal.OFFLINE_NOT_ALLOWED, 0);
     }
     if (!bypassCooldown && lastPaymentAt.isPresent()) {

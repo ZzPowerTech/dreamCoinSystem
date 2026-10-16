@@ -4,7 +4,6 @@ import dev.austv.dreamcoins.account.AccountLedger.Outcome;
 import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.payment.PaymentPolicy.Decision;
 import dev.austv.dreamcoins.payment.PaymentPolicy.Rules;
-import dev.austv.dreamcoins.storage.GuardedResult;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.OptionalLong;
@@ -95,7 +94,15 @@ public final class PaymentService {
         request.amount(),
         bypassCooldown,
         true,
-        true);
+        true)
+        .thenApply(
+            result -> {
+              // Recusa temporária não apaga o pedido: o jogador espera o cooldown e confirma de novo.
+              if (result.status() == Status.COOLDOWN) {
+                pending.putIfAbsent(payer, request);
+              }
+              return result;
+            });
   }
 
   /** O jogador saiu: o pedido à espera de confirmação morre com a sessão. */
@@ -118,7 +125,9 @@ public final class PaymentService {
             current,
             payer,
             target,
-            accounts.isLoaded(target),
+            // A regra é sobre o jogador estar online de verdade; estar no cache (saindo, devendo
+            // flush) ou fora dele (entrando) só decide o caminho do dinheiro, mais abaixo.
+            accounts.isOnline(target),
             amount,
             now,
             lastPaymentOf(payer),
@@ -147,56 +156,44 @@ public final class PaymentService {
     Long previous = lastPayment.put(payer, now);
     if (accounts.isLoaded(target)) {
       Status status = status(accounts.transfer(payer, target, amount));
-      return finish(status, payer, previous, amount, target, targetName);
+      return finish(status, payer, previous, now, amount, target, targetName);
     }
-    Outcome debit = accounts.withdraw(payer, amount);
-    if (debit != Outcome.OK) {
-      return finish(status(debit), payer, previous, amount, target, targetName);
-    }
-    accounts.flushNow(payer);
     return accounts
-        .applyOffline(target, amount)
+        .transferToOffline(payer, target, amount)
         .handle(
-            (credit, error) -> {
-              if (error == null && credit.outcome() == Outcome.OK) {
-                return result(Status.PAID, amount, payer, 0, target, targetName);
+            (outcome, error) -> {
+              Status status = error != null ? Status.UNAVAILABLE : status(outcome);
+              if (status != Status.PAID) {
+                restoreCooldown(payer, previous, now);
               }
-              refund(payer, amount, targetName);
-              Status status = error != null ? Status.UNAVAILABLE : offlineStatus(credit);
-              restoreCooldown(payer, previous);
               return result(status, amount, payer, 0, target, targetName);
             });
   }
 
-  private void refund(UUID payer, long amount, String targetName) {
-    accounts
-        .refund(payer, amount)
-        .whenComplete(
-            (outcome, error) -> {
-              if (error != null || outcome != Outcome.OK) {
-                logger.severe(
-                    "Estorno de "
-                        + amount
-                        + " bronze para "
-                        + payer
-                        + " (pagamento a "
-                        + targetName
-                        + " falhou) não foi aplicado: "
-                        + (error != null ? error : outcome)
-                        + ". Devolva à mão com /moedas give.");
-              }
-            });
-  }
-
   private CompletableFuture<Result> finish(
-      Status status, UUID payer, Long previous, long amount, UUID target, String targetName) {
+      Status status,
+      UUID payer,
+      Long previous,
+      long now,
+      long amount,
+      UUID target,
+      String targetName) {
     if (status != Status.PAID) {
-      restoreCooldown(payer, previous);
+      restoreCooldown(payer, previous, now);
     }
     return done(status, amount, payer, 0, target, targetName);
   }
 
-  private void restoreCooldown(UUID payer, Long previous) {
+  /**
+   * Desfaz o cooldown de um pagamento que falhou — só se ninguém o mudou depois. Um pagamento
+   * offline lento que falhe depois de outro pagamento do mesmo jogador não pode apagar o cooldown
+   * daquele outro.
+   */
+  private void restoreCooldown(UUID payer, Long previous, long markedAt) {
+    Long current = lastPayment.get(payer);
+    if (current == null || current != markedAt) {
+      return;
+    }
     if (previous == null) {
       lastPayment.remove(payer);
     } else {
@@ -207,10 +204,6 @@ public final class PaymentService {
   private OptionalLong lastPaymentOf(UUID payer) {
     Long at = lastPayment.get(payer);
     return at == null ? OptionalLong.empty() : OptionalLong.of(at);
-  }
-
-  private static Status offlineStatus(GuardedResult credit) {
-    return status(credit.outcome());
   }
 
   private static Status status(Outcome outcome) {

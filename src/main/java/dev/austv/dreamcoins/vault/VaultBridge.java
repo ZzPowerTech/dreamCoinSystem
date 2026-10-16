@@ -81,7 +81,7 @@ public final class VaultBridge {
   }
 
   /**
-   * {@code getBalance} para quem chama <b>fora da main thread</b> (TAB, scoreboards): conta do cache
+   * {@code getBalance} para chamadas <b>fora da main thread</b> (TAB, scoreboards): conta no cache
    * responde pelo espelho, sem esperar um tick pela main thread. Vazio se a conta não está no
    * cache — aí quem chama segue pelo caminho normal.
    */

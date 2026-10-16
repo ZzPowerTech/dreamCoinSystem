@@ -469,8 +469,8 @@ public final class AccountService {
               if (error != null) {
                 out.completeExceptionally(error);
               } else {
-                // O cache tinha o suficiente (conferido antes); recusa por saldo no banco é crédito do
-                // pagador ainda a caminho (flush em voo ou falho), não falta de dinheiro.
+                // O cache tinha o suficiente (conferido antes); recusa por saldo no banco é crédito
+                // do pagador ainda a caminho (flush em voo ou falho), não falta de dinheiro.
                 out.complete(outcome == Outcome.INSUFFICIENT ? Outcome.BUSY : outcome);
               }
             },

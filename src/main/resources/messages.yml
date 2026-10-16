@@ -37,3 +37,8 @@ errors:
   account-loading: "<red>Sua conta ainda está carregando. Tente de novo em instantes."
   database: "<red>Erro ao consultar o banco de dados. Avise a staff."
   account-load-failed: "<red>Não foi possível carregar sua conta de moedas. Tente entrar de novo."
+
+# Texto puro (sem cor) usado pelas placeholders %dreamcoins_*%.
+placeholders:
+  # %dreamcoins_highest% quando o jogador não tem moeda nenhuma.
+  no-coin: "nenhuma"

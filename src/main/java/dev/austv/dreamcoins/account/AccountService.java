@@ -311,6 +311,15 @@ public final class AccountService {
     return ledger.contains(uuid);
   }
 
+  /**
+   * Saldo de uma conta do cache lido do espelho — <b>de qualquer thread</b>. Para exibir
+   * (placeholders, {@code getBalance} assíncrono do Vault), nunca para decidir um pagamento: pode
+   * estar um instante atrás da main thread. Vazio se a conta não está no cache.
+   */
+  public OptionalLong snapshot(UUID uuid) {
+    return ledger.snapshot(uuid);
+  }
+
   public OptionalLong balance(UUID uuid) {
     return ledger.balance(uuid);
   }

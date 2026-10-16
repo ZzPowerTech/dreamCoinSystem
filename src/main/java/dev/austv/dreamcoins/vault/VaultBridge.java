@@ -9,6 +9,8 @@ import dev.austv.dreamcoins.money.Money;
 import dev.austv.dreamcoins.money.MoneyFormatter;
 import dev.austv.dreamcoins.money.VaultAmounts;
 import dev.austv.dreamcoins.storage.GuardedResult;
+import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -76,6 +78,31 @@ public final class VaultBridge {
     }
     OptionalLong needed = VaultAmounts.toBronzeCeil(amount);
     return needed.isPresent() && balance.getAsLong() >= needed.getAsLong();
+  }
+
+  /**
+   * {@code getBalance} para quem chama <b>fora da main thread</b> (TAB, scoreboards): conta no cache
+   * responde pelo espelho, sem esperar um tick pela main thread. Vazio se a conta não está no
+   * cache — aí quem chama segue pelo caminho normal.
+   */
+  public OptionalDouble balanceFromAnyThread(UUID uuid) {
+    OptionalLong snapshot = accounts.snapshot(uuid);
+    return snapshot.isPresent()
+        ? OptionalDouble.of(VaultAmounts.toVault(snapshot.getAsLong()))
+        : OptionalDouble.empty();
+  }
+
+  /** {@code has} fora da main thread, pelo espelho, com o mesmo arredondamento de saque. */
+  public Optional<Boolean> hasFromAnyThread(UUID uuid, double amount) {
+    OptionalLong snapshot = accounts.snapshot(uuid);
+    if (snapshot.isEmpty()) {
+      return Optional.empty();
+    }
+    if (amount <= 0) {
+      return Optional.of(true);
+    }
+    OptionalLong needed = VaultAmounts.toBronzeCeil(amount);
+    return Optional.of(needed.isPresent() && snapshot.getAsLong() >= needed.getAsLong());
   }
 
   // ---------------------------------------------------------------- escrita

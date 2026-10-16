@@ -5,6 +5,8 @@ import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.command.BalanceCommand;
 import dev.austv.dreamcoins.config.Messages;
 import dev.austv.dreamcoins.config.PluginConfig;
+import dev.austv.dreamcoins.placeholder.DreamCoinsExpansion;
+import dev.austv.dreamcoins.placeholder.PlaceholderResolver;
 import dev.austv.dreamcoins.storage.MySqlStorage;
 import dev.austv.dreamcoins.storage.SequencedExecutor;
 import dev.austv.dreamcoins.storage.SqliteStorage;
@@ -72,6 +74,7 @@ public final class DreamCoins extends JavaPlugin {
     Objects.requireNonNull(getCommand("saldo")).setTabCompleter(balance);
 
     registerEconomy();
+    registerPlaceholders();
     scheduleTasks();
     String backend = config.storageType().name().toLowerCase(Locale.ROOT);
     getLogger().info("Economia pronta (" + backend + ").");
@@ -97,6 +100,18 @@ public final class DreamCoins extends JavaPlugin {
       return new MySqlStorage(config.mysql());
     }
     return new SqliteStorage(getDataFolder().toPath().resolve(config.sqliteFile()));
+  }
+
+  /** {@code %dreamcoins_*%}, se o PlaceholderAPI estiver instalado (é opcional). */
+  private void registerPlaceholders() {
+    if (getServer().getPluginManager().getPlugin("PlaceholderAPI") == null) {
+      getLogger().info("PlaceholderAPI ausente: placeholders desativadas.");
+      return;
+    }
+    PlaceholderResolver resolver =
+        new PlaceholderResolver(
+            () -> messages.formatter(), () -> messages.raw("placeholders.no-coin", "nenhuma"));
+    new DreamCoinsExpansion(this, accounts, resolver).register();
   }
 
   /**

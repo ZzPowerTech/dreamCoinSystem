@@ -127,11 +127,13 @@ provedor de Economy do Vault (`vault/`).
 **v1 completa.** Falta antes de ir ao ar: roteiro de `docs/MANUAL-TESTS.md` num Paper local,
 validação com MySQL real e CI verde (hoje bloqueada pela cobrança do GitHub, não por código).
 
-**Pendências menores da revisão do PR #5 — corrigidas no PR 6 (`fix/placeholder-followups`):**
+**Pendências menores da revisão do PR #5 — corrigidas no [#6](https://github.com/ZzPowerTech/dreamCoinSystem/pull/6) (mergeado):**
 - **A expansão sai no `onDisable`.** O PlaceholderAPI só remove sozinho a expansão cujo
   `getRequiredPlugin()` bate com o plugin desligado; sem o `unregister()`, `%dreamcoins_*%` seguia
   lendo o espelho congelado. O `DreamCoins` guarda um `Runnable` (não o tipo da expansão, para não
   depender do PlaceholderAPI opcional), e o `onRequest` de uma instância desligada devolve `null`.
+  O `shutdown` roda **antes** do desregistro, que é protegido: com o PAPI descarregado antes de
+  nós, uma exceção ali abortaria o `onDisable` sem gravar o pendente (revisão do PR #6).
 - **`has_0` é `true`.** A regra de zero do `/moedas set` subiu para
   `MoneyParser#parseAllowingZero`, usada pelo `AmountArgs` e pelo `has_`.
 - Imports do `DreamCoins.java` na ordem do Google Java Style.

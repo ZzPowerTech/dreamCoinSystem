@@ -69,6 +69,14 @@ public final class Messages {
     return formatter;
   }
 
+  /**
+   * Texto cru da chave, sem MiniMessage — para placeholders, que vão para dentro de outro plugin.
+   * Seguro de qualquer thread: o reload troca a configuração inteira, nunca a altera no lugar.
+   */
+  public String raw(String key, String fallback) {
+    return loaded.getString(key, fallback);
+  }
+
   /** Componente da chave, sem prefixo. */
   public Component get(String key, TagResolver... resolvers) {
     return MINI.deserialize(loaded.getString(key, key), resolvers);

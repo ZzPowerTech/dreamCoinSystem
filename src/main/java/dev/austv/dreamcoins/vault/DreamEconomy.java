@@ -4,6 +4,7 @@ import dev.austv.dreamcoins.account.AccountService;
 import dev.austv.dreamcoins.money.VaultAmounts;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
@@ -137,7 +138,15 @@ public final class DreamEconomy implements Economy {
 
   @Override
   public double getBalance(OfflinePlayer player) {
-    return onMain(() -> bridge.balance(player.getUniqueId()), 0.0);
+    UUID uuid = player.getUniqueId();
+    if (!Bukkit.isPrimaryThread() && plugin.isEnabled()) {
+      // Leitura assíncrona (TAB, scoreboards) de conta do cache: pelo espelho, sem esperar um tick.
+      OptionalDouble cached = bridge.balanceFromAnyThread(uuid);
+      if (cached.isPresent()) {
+        return cached.getAsDouble();
+      }
+    }
+    return onMain(() -> bridge.balance(uuid), 0.0);
   }
 
   @Override
@@ -157,7 +166,14 @@ public final class DreamEconomy implements Economy {
 
   @Override
   public boolean has(OfflinePlayer player, double amount) {
-    return onMain(() -> bridge.has(player.getUniqueId(), amount), false);
+    UUID uuid = player.getUniqueId();
+    if (!Bukkit.isPrimaryThread() && plugin.isEnabled()) {
+      Optional<Boolean> cached = bridge.hasFromAnyThread(uuid, amount);
+      if (cached.isPresent()) {
+        return cached.get();
+      }
+    }
+    return onMain(() -> bridge.has(uuid, amount), false);
   }
 
   @Override

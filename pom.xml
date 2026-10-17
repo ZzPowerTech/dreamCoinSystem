@@ -21,6 +21,7 @@
          compilar contra uma API mais nova que a instalada quebraria em runtime. -->
     <paper.version>1.21.11-R0.1-SNAPSHOT</paper.version>
     <vault.version>1.7.1</vault.version>
+    <placeholderapi.version>2.12.2</placeholderapi.version>
 
     <sqlite.version>3.53.2.1</sqlite.version>
     <mysql.version>9.7.0</mysql.version>
@@ -37,6 +38,10 @@
     <repository>
       <id>jitpack</id>
       <url>https://jitpack.io</url>
+    </repository>
+    <repository>
+      <id>extendedclip</id>
+      <url>https://repo.extendedclip.com/releases/</url>
     </repository>
   </repositories>
 
@@ -55,6 +60,20 @@
       <groupId>com.github.MilkBowl</groupId>
       <artifactId>VaultAPI</artifactId>
       <version>${vault.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>*</groupId>
+          <artifactId>*</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+
+    <!-- PlaceholderAPI é opcional (softdepend): sem ele o plugin sobe e só as placeholders somem. -->
+    <dependency>
+      <groupId>me.clip</groupId>
+      <artifactId>placeholderapi</artifactId>
+      <version>${placeholderapi.version}</version>
       <scope>provided</scope>
       <exclusions>
         <exclusion>

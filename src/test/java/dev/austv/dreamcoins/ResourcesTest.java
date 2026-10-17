@@ -92,7 +92,8 @@ class ResourcesTest {
         "coins.gold.singular",
         "coins.silver.symbol",
         "coins.bronze.plural",
-        "format.last-separator"
+        "format.last-separator",
+        "placeholders.no-coin"
       })
   void messageKeysExist(String key) throws Exception {
     assertTrue(load("messages.yml").isString(key), key);

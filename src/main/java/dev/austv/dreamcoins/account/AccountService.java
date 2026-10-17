@@ -272,6 +272,9 @@ public final class AccountService {
               }
               if (error != null) {
                 logger.log(Level.WARNING, "Falha ao gravar saldos; tento no próximo ciclo", error);
+                // O banco caiu: abrir já poupa a primeira operação offline do Vault de esperar o
+                // timeout de conexão para descobrir o mesmo.
+                openBreaker();
                 List<Delta> lost = ledger.flushFailed(write.seq(), batch);
                 if (!lost.isEmpty()) {
                   logger.severe("Deltas sem conta no cache após flush falho: " + lost);
@@ -318,6 +321,15 @@ public final class AccountService {
 
   public boolean isLoaded(UUID uuid) {
     return ledger.contains(uuid);
+  }
+
+  /**
+   * Saldo de uma conta do cache lido do espelho — <b>de qualquer thread</b>. Para exibir
+   * (placeholders, {@code getBalance} assíncrono do Vault), nunca para decidir um pagamento: pode
+   * estar um instante atrás da main thread. Vazio se a conta não está no cache.
+   */
+  public OptionalLong snapshot(UUID uuid) {
+    return ledger.snapshot(uuid);
   }
 
   public OptionalLong balance(UUID uuid) {
@@ -457,8 +469,8 @@ public final class AccountService {
               if (error != null) {
                 out.completeExceptionally(error);
               } else {
-                // O cache tinha o suficiente (conferido antes); recusa por saldo no banco é crédito do
-                // pagador ainda a caminho (flush em voo ou falho), não falta de dinheiro.
+                // O cache tinha o suficiente (conferido antes); recusa por saldo no banco é crédito
+                // do pagador ainda a caminho (flush em voo ou falho), não falta de dinheiro.
                 out.complete(outcome == Outcome.INSUFFICIENT ? Outcome.BUSY : outcome);
               }
             },

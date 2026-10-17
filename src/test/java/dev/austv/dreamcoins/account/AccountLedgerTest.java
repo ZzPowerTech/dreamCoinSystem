@@ -116,6 +116,65 @@ class AccountLedgerTest {
     assertEquals(List.of(new Delta(alice, -70)), ledger.takePending());
   }
 
+  // ---- espelho para leitura fora da main thread (PR 5) ----
+
+  /**
+   * Passeio aleatório por todas as operações que mexem em saldo: o espelho tem de bater com a
+   * leitura da main thread depois de cada passo. Um caminho que escrevesse o saldo sem passar pelo
+   * {@code setBalance} deixaria o espelho para trás, e é isto que pega.
+   */
+  @Test
+  void mirrorAlwaysMatchesTheBalance() {
+    java.util.Random rnd = new java.util.Random(7);
+    UUID[] ids = {alice, bob, UUID.randomUUID()};
+    long seq = 1;
+    for (int step = 0; step < 5_000; step++) {
+      UUID who = ids[rnd.nextInt(ids.length)];
+      UUID other = ids[rnd.nextInt(ids.length)];
+      long amount = rnd.nextInt(500);
+      seq++;
+      switch (rnd.nextInt(14)) {
+        case 0 -> ledger.loaded(who, "x", rnd.nextInt(2_000), seq, 0);
+        case 1 -> ledger.deposit(who, amount);
+        case 2 -> ledger.withdraw(who, amount);
+        case 3 -> ledger.set(who, amount);
+        case 4 -> {
+          if (!who.equals(other)) {
+            ledger.transfer(who, other, amount);
+          }
+        }
+        case 5 -> ledger.creditApplied(who, amount, seq, 0);
+        case 6 -> ledger.holdStarted(who, amount, seq);
+        case 7 -> ledger.holdFinished(who, amount, seq - rnd.nextInt(5), rnd.nextBoolean(), 0);
+        case 8 -> ledger.resynced(who, rnd.nextInt(2_000), seq);
+        case 9 -> {
+          List<Delta> batch = ledger.takePending();
+          ledger.inFlight(batch, seq);
+          if (rnd.nextBoolean()) {
+            ledger.flushCompleted(seq, 0);
+          } else {
+            ledger.flushFailed(seq, batch);
+          }
+        }
+        case 10 -> ledger.markOffline(who, 0);
+        case 11 -> ledger.debitInFlight(who, amount, seq);
+        case 12 -> ledger.debitFinished(who, amount, seq - rnd.nextInt(5), rnd.nextBoolean(), 0);
+        default -> ledger.reattach(who, "x");
+      }
+      for (UUID id : ids) {
+        assertEquals(ledger.balance(id), ledger.snapshot(id), "passo " + step);
+      }
+    }
+  }
+
+  @Test
+  void evictedAccountLeavesTheMirror() {
+    ledger.loaded(alice, "alice", 100, 1, 0);
+    assertEquals(OptionalLong.of(100), ledger.snapshot(alice));
+    ledger.markOffline(alice, 0);
+    assertEquals(OptionalLong.empty(), ledger.snapshot(alice));
+  }
+
   // ---- débito em voo da transferência atômica para offline (PR 4) ----
 
   @Test

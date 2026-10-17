@@ -226,4 +226,21 @@ class VaultOutageTest {
         millisOf(() -> assertEquals(ResponseType.FAILURE, vault.withdraw(bob, 1.00).type));
     assertTrue(elapsed < 50, "sem abrir na falha, cada chamada esperaria a conexão: " + elapsed);
   }
+
+  /** Re-revisão do PR #2 (M1): o flush periódico também alimenta o disjuntor. */
+  @Test
+  void failedFlushOpensTheBreakerBeforeAnyVaultCallPaysTheTimeout() throws Exception {
+    UUID alice = UUID.randomUUID();
+    accounts.preload(alice, "alice", 5_000);
+    online.add(alice);
+    accounts.join(alice, "alice");
+    accounts.deposit(alice, 10);
+    storage.down = true;
+    accounts.flushAll();
+    db.submit(() -> null).future().get(); // o flush falhou
+    main.runAll(); // callback de falha abre o disjuntor
+    long elapsed =
+        millisOf(() -> assertEquals(ResponseType.FAILURE, vault.withdraw(bob, 1.00).type));
+    assertTrue(elapsed < 50, "primeira chamada offline depois do flush falho levou " + elapsed);
+  }
 }

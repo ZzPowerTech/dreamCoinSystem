@@ -69,6 +69,11 @@ notify:
   taken: "<gray>A staff removeu <yellow><amount></yellow> do seu saldo."
   set: "<gray>A staff definiu seu saldo em <yellow><balance></yellow>."
 
+# Texto puro (sem cor) usado pelas placeholders %dreamcoins_*%.
+placeholders:
+  # %dreamcoins_highest% quando o jogador não tem moeda nenhuma.
+  no-coin: "nenhuma"
+
 pay:
   paid: "<green>Você pagou <yellow><amount></yellow> a <white><player></white>. Saldo: <yellow><balance></yellow>"
   received: "<green>Você recebeu <yellow><amount></yellow> de <white><player></white>. Saldo: <yellow><balance></yellow>"

@@ -47,9 +47,9 @@
 - **PAY-09** Tab-complete de jogadores, números e moedas.
 
 ### Placeholders (PH)
-- **PH-01** Identificador `dreamcoins`, lê só cache (nunca banco).
+- **PH-01** Identificador `dreamcoins`, lê só o espelho do cache (nunca banco), de qualquer thread.
 - **PH-02** `balance`, `balance_short`, `gold|silver|bronze`, `total_gold|silver|bronze`,
-  `total_<moeda>_formatted`, `balance_vault`, `highest`.
+  `total_<moeda>_formatted`, `balance_vault`, `highest`. Extra: `has_<quantia>` (`true`/`false`) e os nomes em português (`ouro`, `prata`).
 - **PH-03** Jogador sem conta carregada → `0`/`0 bronze`, nunca vazio ou erro.
 
 ## Critérios de aceite (exemplos do pedido)

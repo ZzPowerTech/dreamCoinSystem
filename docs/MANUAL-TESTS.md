@@ -113,3 +113,7 @@ Preparação: PlaceholderAPI instalado; saldo de teste `10 ouro 20 prata 3 bronz
    leem só o cache, por desenho).
 6. **`/papi reload`.** As placeholders continuam (expansão persistente).
 
+7. **`has_0`.** `/papi parse me %dreamcoins_has_0%` → `true`, inclusive com saldo zero.
+8. **⚠ Plugin desligado.** `/plugman disable dreamCoinSystem` (ou derrube o banco no boot):
+   `/papi parse me %dreamcoins_balance%` volta o texto cru, não um saldo congelado; `/papi list`
+   não mostra mais `dreamcoins`. Religando, as placeholders voltam.

@@ -13,6 +13,7 @@ Sprint única de 1 semana (padrão AusTV/plugins), cinco PRs em sequência.
 | 3 | `feature/admin-commands` | `/moedas give\|take\|set\|reload` online e offline | ADM-01..04 | ✅ mergeado (#3) |
 | 4 | `feature/pay-command` | `/pagar` + `PaymentPolicy` + confirmação + cooldown | PAY-01..09 | ✅ mergeado (#4) |
 | 5 | `feature/placeholders` | `DreamCoinsExpansion` + espelho de leitura assíncrona | PH-01..03 | ✅ mergeado (#5) |
+| 6 | `fix/placeholder-followups` | Pendências da revisão do PR #5: expansão sai no disable, `has_0`, imports | PH-01..03 | 🔄 PR aberto |
 
 ## Definition of Done (todo PR)
 

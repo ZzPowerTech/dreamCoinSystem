@@ -127,12 +127,14 @@ provedor de Economy do Vault (`vault/`).
 **v1 completa.** Falta antes de ir ao ar: roteiro de `docs/MANUAL-TESTS.md` num Paper local,
 validação com MySQL real e CI verde (hoje bloqueada pela cobrança do GitHub, não por código).
 
-**Pendências menores da revisão do PR #5** (não bloqueiam):
-- `onDisable` não desregistra a expansão (`getRequiredPlugin()` não sobrescrito): com o plugin
-  desligado sem religar, `%dreamcoins_*%` continua respondendo pelo espelho congelado. Correção:
-  guardar a expansão e chamar `unregister()` no `onDisable`.
-- `has_0` devolve `null` (o parser recusa zero); o esperado seria `true`.
-- Imports do `DreamCoins.java` fora da ordem ASCII do Google Java Style.
+**Pendências menores da revisão do PR #5 — corrigidas no PR 6 (`fix/placeholder-followups`):**
+- **A expansão sai no `onDisable`.** O PlaceholderAPI só remove sozinho a expansão cujo
+  `getRequiredPlugin()` bate com o plugin desligado; sem o `unregister()`, `%dreamcoins_*%` seguia
+  lendo o espelho congelado. O `DreamCoins` guarda um `Runnable` (não o tipo da expansão, para não
+  depender do PlaceholderAPI opcional), e o `onRequest` de uma instância desligada devolve `null`.
+- **`has_0` é `true`.** A regra de zero do `/moedas set` subiu para
+  `MoneyParser#parseAllowingZero`, usada pelo `AmountArgs` e pelo `has_`.
+- Imports do `DreamCoins.java` na ordem do Google Java Style.
 
 ### Decisões de design do PR 5
 

@@ -56,6 +56,7 @@ class PlaceholderResolverTest {
         "balance_vault  | 0.00",
         "highest        | nenhuma",
         "has_1_bronze   | false",
+        "has_0          | true",
       })
   void accountNotLoadedReadsAsZero(String params, String expected) {
     assertEquals(expected, resolver.resolve(params.trim(), OptionalLong.empty()));
@@ -83,5 +84,17 @@ class PlaceholderResolverTest {
     assertNull(resolver.resolve("has_3_cobre", BALANCE));
     assertNull(resolver.resolve("has_", BALANCE));
     assertNull(resolver.resolve("cobre", BALANCE));
+  }
+
+  /** Revisão do PR #5: "tem zero?" é sempre sim; antes o parser recusava e o texto saía cru. */
+  @Test
+  void hasZeroIsAlwaysTrue() {
+    for (String zero : new String[] {"has_0", "has_0_ouro", "has_0o", "has_0_ouro_0_prata"}) {
+      assertEquals("true", resolver.resolve(zero, BALANCE), zero);
+      assertEquals("true", resolver.resolve(zero, OptionalLong.empty()), zero);
+    }
+    assertNull(resolver.resolve("has_0_cobre", BALANCE));
+    assertNull(resolver.resolve("has_0_ouro_0_ouro", BALANCE));
+    assertNull(resolver.resolve("has_0_ouro_5_bronze", BALANCE));
   }
 }

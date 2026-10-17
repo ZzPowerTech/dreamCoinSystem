@@ -49,6 +49,9 @@ public final class DreamCoinsExpansion extends PlaceholderExpansion {
 
   @Override
   public String onRequest(OfflinePlayer player, String params) {
+    if (!plugin.isEnabled()) {
+      return null; // instância velha: o saldo dela parou de andar
+    }
     OptionalLong balance =
         player == null ? OptionalLong.empty() : accounts.snapshot(player.getUniqueId());
     return resolver.resolve(params, balance);

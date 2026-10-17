@@ -27,7 +27,8 @@ import java.util.function.Supplier;
  *   <li>{@code balance_vault} — o valor que outros plugins enxergam pelo Vault ({@code 10020.03})
  *   <li>{@code highest} — a maior moeda que o jogador possui
  *   <li>{@code has_<quantia>} — {@code true}/{@code false}; a quantia com {@code _} no lugar do
- *       espaço: {@code has_1_ouro_50_prata}, {@code has_1o_50p}
+ *       espaço: {@code has_1_ouro_50_prata}, {@code has_1o_50p}; {@code has_0} é sempre {@code
+ *       true}
  * </ul>
  *
  * <p>Conta não carregada lê como zero, nunca como vazio: uma linha de scoreboard em branco parece
@@ -91,7 +92,7 @@ public final class PlaceholderResolver {
     if (amount.isEmpty()) {
       return null;
     }
-    ParseResult parsed = MoneyParser.parse(Arrays.asList(amount.split("_")));
+    ParseResult parsed = MoneyParser.parseAllowingZero(Arrays.asList(amount.split("_")));
     if (!(parsed instanceof ParseResult.Success success)) {
       return null;
     }

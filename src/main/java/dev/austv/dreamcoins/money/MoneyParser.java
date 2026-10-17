@@ -1,5 +1,6 @@
 package dev.austv.dreamcoins.money;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -42,6 +43,7 @@ public final class MoneyParser {
 
   private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:[.,]\\d+)?");
   private static final Pattern COMPACT = Pattern.compile("(-?\\d+(?:[.,]\\d+)?)(\\p{L}+)");
+  private static final Pattern ZERO_COMPACT = Pattern.compile("0+(\\p{L}+)");
 
   private MoneyParser() {}
 
@@ -95,6 +97,45 @@ public final class MoneyParser {
       }
     }
     return new ParseResult.Success(total);
+  }
+
+  /**
+   * Como {@link #parse}, mas zero escrito por inteiro também vale: "0", "00", "0o", "0 ouro 0
+   * prata". Para o {@code /moedas set} (zerar o saldo é ordem legítima) e o placeholder {@code
+   * has_0}; dar, tirar ou pagar zero continua sendo erro de digitação.
+   */
+  public static ParseResult parseAllowingZero(List<String> args) {
+    return isZero(args) ? new ParseResult.Success(Money.ZERO) : parse(args);
+  }
+
+  /**
+   * Todo número é zero e, trocando-os por 1, o resto é uma quantia válida (moedas conhecidas, sem
+   * repetição). "0 cobre" não é zero — é erro; "0 ouro 5 bronze" também, como no {@code /pagar}.
+   */
+  private static boolean isZero(List<String> tokens) {
+    List<String> probe = new ArrayList<>(tokens.size());
+    boolean anyNumber = false;
+    for (String token : tokens) {
+      Matcher compact = ZERO_COMPACT.matcher(token);
+      if (token.matches("0+")) {
+        probe.add("1");
+        anyNumber = true;
+      } else if (compact.matches()) {
+        probe.add("1" + compact.group(1));
+        anyNumber = true;
+      } else if (!token.isEmpty() && Character.isDigit(token.charAt(0))) {
+        return false; // um número diferente de zero
+      } else {
+        probe.add(token);
+      }
+    }
+    if (!anyNumber) {
+      return false;
+    }
+    if (probe.equals(List.of("1"))) {
+      return true;
+    }
+    return parse(probe) instanceof ParseResult.Success;
   }
 
   /**

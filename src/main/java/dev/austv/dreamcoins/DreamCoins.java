@@ -7,11 +7,10 @@ import dev.austv.dreamcoins.command.BalanceCommand;
 import dev.austv.dreamcoins.command.PayCommand;
 import dev.austv.dreamcoins.config.Messages;
 import dev.austv.dreamcoins.config.PluginConfig;
-import dev.austv.dreamcoins.placeholder.DreamCoinsExpansion;
-import dev.austv.dreamcoins.placeholder.PlaceholderResolver;
-
 import dev.austv.dreamcoins.payment.PaymentPolicy;
 import dev.austv.dreamcoins.payment.PaymentService;
+import dev.austv.dreamcoins.placeholder.DreamCoinsExpansion;
+import dev.austv.dreamcoins.placeholder.PlaceholderResolver;
 import dev.austv.dreamcoins.storage.MySqlStorage;
 import dev.austv.dreamcoins.storage.SequencedExecutor;
 import dev.austv.dreamcoins.storage.SqliteStorage;
@@ -39,6 +38,11 @@ public final class DreamCoins extends JavaPlugin {
   private volatile PaymentPolicy.Rules paymentRules;
   private Messages messages;
   private AccountService accounts;
+  /**
+   * Desfaz o registro das placeholders. {@link Runnable} em vez do tipo da expansão para esta
+   * classe não depender do PlaceholderAPI, que é opcional.
+   */
+  private Runnable unregisterPlaceholders = () -> {};
 
   @Override
   public void onEnable() {
@@ -101,6 +105,9 @@ public final class DreamCoins extends JavaPlugin {
 
   @Override
   public void onDisable() {
+    // O PlaceholderAPI só tira sozinho a expansão cujo getRequiredPlugin() bate com o plugin
+    // desligado; sem isto, %dreamcoins_*% seguiria lendo o espelho congelado (revisão do PR #5).
+    unregisterPlaceholders.run();
     if (accounts != null) {
       accounts.shutdown();
     }
@@ -158,7 +165,12 @@ public final class DreamCoins extends JavaPlugin {
     PlaceholderResolver resolver =
         new PlaceholderResolver(
             () -> messages.formatter(), () -> messages.raw("placeholders.no-coin", "nenhuma"));
-    new DreamCoinsExpansion(this, accounts, resolver).register();
+    DreamCoinsExpansion expansion = new DreamCoinsExpansion(this, accounts, resolver);
+    if (expansion.register()) {
+      unregisterPlaceholders = expansion::unregister;
+    } else {
+      getLogger().warning("O PlaceholderAPI recusou o registro de %dreamcoins_*%.");
+    }
   }
 
   /**

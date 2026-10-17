@@ -121,8 +121,18 @@ provedor de Economy do Vault (`vault/`).
   entram e saem, com quedas de banco no flush e na escrita offline — a soma do dinheiro nunca muda e
   o cache bate com o banco. É a versão em `src/test` do fuzz que a revisão do PR 1 rodou à parte.
 
-**PR 5 (`feature/placeholders`) — atual:** `%dreamcoins_*%` (`placeholder/`) e o espelho de
-saldos para leitura fora da main thread.
+**PR 5 (`feature/placeholders`) — mergeado ([#5](https://github.com/ZzPowerTech/dreamCoinSystem/pull/5)):**
+`%dreamcoins_*%` (`placeholder/`) e o espelho de saldos para leitura fora da main thread.
+
+**v1 completa.** Falta antes de ir ao ar: roteiro de `docs/MANUAL-TESTS.md` num Paper local,
+validação com MySQL real e CI verde (hoje bloqueada pela cobrança do GitHub, não por código).
+
+**Pendências menores da revisão do PR #5** (não bloqueiam):
+- `onDisable` não desregistra a expansão (`getRequiredPlugin()` não sobrescrito): com o plugin
+  desligado sem religar, `%dreamcoins_*%` continua respondendo pelo espelho congelado. Correção:
+  guardar a expansão e chamar `unregister()` no `onDisable`.
+- `has_0` devolve `null` (o parser recusa zero); o esperado seria `true`.
+- Imports do `DreamCoins.java` fora da ordem ASCII do Google Java Style.
 
 ### Decisões de design do PR 5
 

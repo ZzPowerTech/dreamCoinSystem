@@ -105,11 +105,17 @@ public final class DreamCoins extends JavaPlugin {
 
   @Override
   public void onDisable() {
-    // O PlaceholderAPI só tira sozinho a expansão cujo getRequiredPlugin() bate com o plugin
-    // desligado; sem isto, %dreamcoins_*% seguiria lendo o espelho congelado (revisão do PR #5).
-    unregisterPlaceholders.run();
+    // Gravar o pendente vem antes de tudo: nada depois disto pode impedir o shutdown.
     if (accounts != null) {
       accounts.shutdown();
+    }
+    // O PlaceholderAPI só tira sozinho a expansão cujo getRequiredPlugin() bate com o plugin
+    // desligado; sem isto, %dreamcoins_*% seguiria lendo o espelho congelado (revisão do PR #5).
+    try {
+      unregisterPlaceholders.run();
+    } catch (Throwable error) {
+      // PlaceholderAPI descarregado antes de nós (plugman): a expansão já foi com ele.
+      getLogger().log(Level.FINE, "Desregistro das placeholders falhou", error);
     }
   }
 
